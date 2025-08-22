@@ -1,8 +1,8 @@
 import sys
 
-from context import build_context
-from parser import paste_response
-from utils import load_from_py_file
+from .context import build_context
+from .parser import paste_response
+from .utils import load_from_py_file
 import textwrap
 import argparse
 import litellm
@@ -18,16 +18,21 @@ class Assistant:
     def __init__(
             self, 
             model_name="gemini/gemini-2.5-flash",
+            configs: dict = None,
             configs_file = "./configs.py",
         ):
         """
         Initializes the Assistant.
         Args:
             model_name (str): The alias for the generative model to use (must be a litellm supported model string).
+            configs (Dict[str]): A dictionary of configurations to use for building the code context.
             configs_file (str): The path to the configurations file.
         """
         self.model_name = model_name
-        self.configs = load_from_py_file(configs_file, "configs")
+        if configs:
+            self.configs = configs
+        else:
+            self.configs = load_from_py_file(configs_file, "configs")
         system_prompt = textwrap.dedent("""
             You are an expert pair programmer. Your purpose is to help users by modifying files based on their instructions.
 
@@ -192,7 +197,7 @@ def main():
 
     # Handle voice input
     if args.voice not in ["False", "false"]:
-        from listener import listen, speak
+        from .listener import listen, speak
 
         speak("Say your task instruction.")
         task = listen()

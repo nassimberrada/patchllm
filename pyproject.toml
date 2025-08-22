@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patchllm"
-version = "0.1.0"
+version = "0.1.1"
 description = "Lightweight tool to manage contexts and update code with LLMs"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -12,10 +12,20 @@ license = {file = "LICENSE"}
 authors = [
   {name="nassimberrada"},
 ]
-dependencies = ["litellm"]
+
+dependencies = [
+    "litellm",
+    "python-dotenv"
+]
 
 [project.scripts]
-yourtool = "patchllm.main:main"
+patchllm = "patchllm.main:main"
+
+[project.optional-dependencies]
+voice = [
+    "SpeechRecognition",
+    "pyttsx3"
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

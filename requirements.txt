@@ -1,2 +1,4 @@
 litellm
-load-dotenv
+python-dotenv
+SpeechRecognition
+pyttsx3
