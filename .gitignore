@@ -1,0 +1,45 @@
+# Byte-compiled / cache / logs
+__pycache__/
+*.py[cod]
+*.pyo
+*.log
+*.out
+*.bak
+*.swp
+*.tmp
+
+# IDEs and editors
+.vscode/
+.idea/
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Common secrets / keys
+*.env
+.env.*
+*.pem
+*.key
+secrets/
+_private/
+*.sqlite3
+*.db
+
+# Coverage and testing
+coverage.*
+.cache/
+.pytest_cache/
+.tox/
+htmlcov/
+test-results.xml
+
+# Misc
+*.orig
+*.rej
+*.patch
+
+# Configs
+configs.py
