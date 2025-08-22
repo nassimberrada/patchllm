@@ -36,10 +36,16 @@ coverage.*
 htmlcov/
 test-results.xml
 
+# Distribution/build folders
+build/
+dist/
+*.egg-info/
+
 # Misc
 *.orig
 *.rej
 *.patch
+*.venv
 
 # Configs
 configs.py
