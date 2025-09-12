@@ -2,6 +2,7 @@ import textwrap
 import argparse
 import litellm
 import pprint
+import os
 from dotenv import load_dotenv
 from rich.console import Console
 
@@ -137,13 +138,14 @@ def main():
     """
     load_dotenv()
     
+    configs_file_path = os.getenv("PATCHLLM_CONFIGS_FILE", "./configs.py")
+
     parser = argparse.ArgumentParser(
         description="A CLI tool to apply code changes using an LLM.",
         formatter_class=argparse.RawTextHelpFormatter
     )
 
-    parser.add_argument("-c", "--config", type=str, default=None, help="Name of the config key to use from the configs.py file.")
-    parser.add_argument("-f", "--configs-file", type=str, default="./configs.py", help="Path to the configuration file. Defaults to './configs.py'.")
+    parser.add_argument("-c", "--config", type=str, default=None, help="Name of the config key to use from the configs file.")
     parser.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
     parser.add_argument("-o", "--context-out", nargs='?', const="context.md", default=None, help="Export the generated context to a file. Defaults to 'context.md'.")
     parser.add_argument("-i", "--context-in", type=str, default=None, help="Import a previously saved context from a file.")
@@ -159,24 +161,24 @@ def main():
     args = parser.parse_args()
 
     try:
-        configs = load_from_py_file(args.configs_file, "configs")
+        configs = load_from_py_file(configs_file_path, "configs")
     except FileNotFoundError:
         configs = {}
-        if not (args.init or args.list-configs):
-             console.print(f"⚠️  Config file '{args.configs_file}' not found. You can create one with the --init flag.", style="yellow")
+        if not (args.init or args.list_configs):
+             console.print(f"⚠️  Config file '{configs_file_path}' not found. You can create one with the --init flag.", style="yellow")
 
 
     if args.list_configs:
-        console.print(f"Available configurations in '[bold]{args.configs_file}[/]':", style="bold")
+        console.print(f"Available configurations in '[bold]{configs_file_path}[/]':", style="bold")
         if not configs:
-            console.print(f"  -> No configurations found or '{args.configs_file}' is missing.")
+            console.print(f"  -> No configurations found or '{configs_file_path}' is missing.")
         else:
             for config_name in configs:
                 console.print(f"  - {config_name}")
         return
 
     if args.init:
-        create_new_config(configs, args.configs_file)
+        create_new_config(configs, configs_file_path)
         return
 
     if args.from_clipboard:
