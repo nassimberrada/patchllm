@@ -2,6 +2,8 @@ import sys
 import textwrap
 import argparse
 import litellm
+import pprint
+from pathlib import Path
 from dotenv import load_dotenv
 
 from .context import build_context
@@ -74,6 +76,54 @@ def read_from_file(file_path):
     except Exception as e:
         raise RuntimeError(f"Failed to read from file {file_path}: {e}") from e
 
+def create_new_config(configs):
+    """Interactively creates a new configuration and saves it to configs.py."""
+    print("\n--- Creating a new configuration ---")
+    
+    try:
+        name = input("Enter a name for the new configuration: ").strip()
+        if not name:
+            print("Configuration name cannot be empty.")
+            return
+
+        if name in configs:
+            overwrite = input(f"Configuration '{name}' already exists. Overwrite? (y/n): ").lower()
+            if overwrite not in ['y', 'yes']:
+                print("Operation cancelled.")
+                return
+
+        path = input("Enter the base path (e.g., '.' for current directory): ").strip() or "."
+        
+        print("Enter comma-separated glob patterns for files to include (e.g., **/*.py, src/**/*.js):")
+        include_raw = input("> ").strip()
+        include_patterns = [p.strip() for p in include_raw.split(',') if p.strip()]
+
+        print("Enter comma-separated glob patterns for files to exclude (e.g., **/tests/*, venv/*):")
+        exclude_raw = input("> ").strip()
+        exclude_patterns = [p.strip() for p in exclude_raw.split(',') if p.strip()]
+
+        new_config_data = {
+            "path": path,
+            "include_patterns": include_patterns,
+            "exclude_patterns": exclude_patterns,
+        }
+
+        configs[name] = new_config_data
+
+        # Write the updated configs back to the file
+        with open("configs.py", "w", encoding="utf-8") as f:
+            f.write("# configs.py\n")
+            f.write("configs = ")
+            # Use pprint for a nicely formatted dictionary string
+            f.write(pprint.pformat(configs, indent=4))
+            f.write("\n")
+        
+        print(f"\nSuccessfully created and saved configuration '{name}' in 'configs.py'.")
+
+    except KeyboardInterrupt:
+        print("\n\nConfiguration creation cancelled by user.")
+        return
+
 def main():
     """
     Main entry point for the patchllm command-line tool.
@@ -84,16 +134,18 @@ def main():
         description="A CLI tool to apply code changes using an LLM."
     )
 
-    parser.add_argument("--config", type=str, default=None, help="Name of the config key to use from the configs.py file.")
-    parser.add_argument("--task", type=str, default=None, help="The task instructions to guide the assistant.")
-    parser.add_argument("--context-out", nargs='?', const="context.md", default=None, help="Optional path to export the generated context. Defaults to 'context.md' if no path is given.")
-    parser.add_argument("--context-in", type=str, default=None, help="Optional path to import a previously saved context from a file.")
-    parser.add_argument("--model", type=str, default="gemini/gemini-2.5-flash", help="Optional model name to override the default model.")
-    parser.add_argument("--from-file", type=str, default=None, help="File path for a file with pre-formatted updates.")
+    parser.add_argument("-c", "--config", type=str, default=None, help="Name of the config key to use from the configs.py file.")
+    parser.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
+    parser.add_argument("-o", "--context-out", nargs='?', const="context.md", default=None, help="Optional path to export the generated context. Defaults to 'context.md' if no path is given.")
+    parser.add_argument("-i", "--context-in", type=str, default=None, help="Optional path to import a previously saved context from a file.")
+    parser.add_argument("-m", "--model", type=str, default="gemini/gemini-1.5-flash", help="Optional model name to override the default model.")
+    parser.add_argument("-f", "--from-file", type=str, default=None, help="File path for a file with pre-formatted updates.")
     parser.add_argument("--from-clipboard", action="store_true", help="Parse updates directly from the clipboard.")
     parser.add_argument("--update", type=str, default="True", help="Whether to pass the input context to the llm to update the files.")
     parser.add_argument("--voice", type=str, default="False", help="Whether to interact with the script using voice commands.")
     parser.add_argument("--list-configs", action="store_true", help="List all available configuration keys from the configs file and exit.")
+    parser.add_argument("--init", action="store_true", help="Create a new configuration interactively.")
+
 
     args = parser.parse_args()
 
@@ -109,6 +161,10 @@ def main():
         else:
             for config_name in configs:
                 print(f"  - {config_name}")
+        return
+
+    if args.init:
+        create_new_config(configs)
         return
 
     if args.from_clipboard:
