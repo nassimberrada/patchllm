@@ -1,7 +1,7 @@
-import os
 import glob
 import textwrap
-import sys
+import subprocess
+import shutil
 from pathlib import Path
 from rich.console import Console
 
@@ -32,11 +32,18 @@ BASE_TEMPLATE = textwrap.dedent('''
     ```
     {{source_tree}}
     ```
-
+    {{url_contents}}
     Relevant Files:
     ---------------
     {{files_content}}
 ''')
+
+URL_CONTENT_TEMPLATE = textwrap.dedent('''
+    URL Contents:
+    -------------
+    {{content}}
+''')
+
 
 # --- Helper Functions (File Discovery, Filtering, Tree Generation) ---
 
@@ -111,6 +118,61 @@ def generate_source_tree(base_path: Path, file_paths: list[Path]) -> str:
     return f"{base_path.name}\n" + "\n".join(_format_tree(tree))
 
 
+def fetch_and_process_urls(urls: list[str]) -> str:
+    """Downloads and converts a list of URLs to text, returning a formatted string."""
+    if not urls:
+        return ""
+
+    try:
+        import html2text
+    except ImportError:
+        console.print("⚠️  To use the URL feature, please install the required extras:", style="yellow")
+        console.print("   pip install patchllm[url]", style="cyan")
+        return ""
+
+    downloader = None
+    if shutil.which("curl"):
+        downloader = "curl"
+    elif shutil.which("wget"):
+        downloader = "wget"
+
+    if not downloader:
+        console.print("⚠️  Cannot fetch URL content: 'curl' or 'wget' not found in PATH.", style="yellow")
+        return ""
+
+    h = html2text.HTML2Text()
+    h.ignore_links = True
+    h.ignore_images = True
+    
+    all_url_contents = []
+
+    console.print("\n--- Fetching URL Content... ---", style="bold")
+    for url in urls:
+        try:
+            console.print(f"Fetching [cyan]{url}[/cyan]...")
+            if downloader == "curl":
+                command = ["curl", "-s", "-L", url]
+            else: # wget
+                command = ["wget", "-q", "-O", "-", url]
+
+            result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=15)
+            html_content = result.stdout
+            text_content = h.handle(html_content)
+            all_url_contents.append(f"<url_content:{url}>\n```\n{text_content}\n```")
+
+        except subprocess.CalledProcessError as e:
+            console.print(f"❌ Failed to fetch {url}: {e.stderr}", style="red")
+        except subprocess.TimeoutExpired:
+            console.print(f"❌ Failed to fetch {url}: Request timed out.", style="red")
+        except Exception as e:
+            console.print(f"❌ An unexpected error occurred while fetching {url}: {e}", style="red")
+
+    if not all_url_contents:
+        return ""
+    
+    content_str = "\n\n".join(all_url_contents)
+    return URL_CONTENT_TEMPLATE.replace("{{content}}", content_str)
+
 # --- Main Context Building Function ---
 
 def build_context(config: dict) -> dict | None:
@@ -129,6 +191,7 @@ def build_context(config: dict) -> dict | None:
     exclude_patterns = config.get("exclude_patterns", [])
     exclude_extensions = config.get("exclude_extensions", DEFAULT_EXCLUDE_EXTENSIONS)
     search_words = config.get("search_words", [])
+    urls = config.get("urls", [])
 
     # Step 1: Find files
     relevant_files = find_files(base_path, include_patterns, exclude_patterns)
@@ -146,11 +209,9 @@ def build_context(config: dict) -> dict | None:
         relevant_files = filter_files_by_keyword(relevant_files, search_words)
         console.print(f"Filtered {count_before_kw - len(relevant_files)} files by keyword search.", style="cyan")
 
-    if not relevant_files:
-        console.print("\n⚠️  No files matched the specified criteria.", style="yellow")
+    if not relevant_files and not urls:
+        console.print("\n⚠️  No files or URLs matched the specified criteria.", style="yellow")
         return None
-
-    console.print(f"\nFinal count of relevant files: {len(relevant_files)}.", style="cyan")
 
     # Generate source tree and file content blocks
     source_tree_str = generate_source_tree(base_path, relevant_files)
@@ -166,8 +227,12 @@ def build_context(config: dict) -> dict | None:
 
     files_content_str = "\n\n".join(file_contents)
 
+    # Fetch and process URL contents
+    url_contents_str = fetch_and_process_urls(urls)
+
     # Assemble the final context using the base template
     final_context = BASE_TEMPLATE.replace("{{source_tree}}", source_tree_str)
+    final_context = final_context.replace("{{url_contents}}", url_contents_str)
     final_context = final_context.replace("{{files_content}}", files_content_str)
     
     return {"tree": source_tree_str, "context": final_context}

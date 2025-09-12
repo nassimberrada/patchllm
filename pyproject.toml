@@ -15,7 +15,8 @@ authors = [
 
 dependencies = [
     "litellm",
-    "python-dotenv"
+    "python-dotenv",
+    "rich"
 ]
 
 [project.scripts]
@@ -25,6 +26,9 @@ patchllm = "patchllm.main:main"
 voice = [
     "SpeechRecognition",
     "pyttsx3"
+]
+url = [
+    "html2text"
 ]
 
 [tool.setuptools.packages.find]
