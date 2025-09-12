@@ -7,31 +7,39 @@
 </p>
 
 ## About
-PatchLLM is a command-line tool that lets you flexibly build LLM context from your codebase using search patterns and automatically apply file edits from the LLM response.
+PatchLLM is a command-line tool that lets you flexibly build LLM context from your codebase using glob patterns, URLs, and keyword searches. It then automatically applies file edits directly from the LLM's response.
 
 ## Usage
 PatchLLM is designed to be used directly from your terminal.
 
-### 1. Define a Context
-First, define which files to include in `configs.py`. You can have multiple configurations.
+### 1. Initialize a Configuration
+The easiest way to get started is to run the interactive initializer. This will create a `configs.py` file for you.
 
+```bash
+patchllm --init
+```
+
+This will guide you through creating your first context configuration, including setting a base path and file patterns. You can add multiple configurations to this file.
+
+A generated `configs.py` might look like this:
 ```python
 # configs.py
 configs = {
     "default": {
         "path": ".",
         "include_patterns": ["**/*.py"],
-        "exclude_patterns": ["**/tests/*"],
+        "exclude_patterns": ["**/tests/*", "venv/*"],
+        "urls": ["https://docs.python.org/3/library/argparse.html"]
     },
     "docs": {
-        "path": ".",
+        "path": "./docs",
         "include_patterns": ["**/*.md"],
     }
 }
 ```
 
-### 2. Run the Tool
-Use the `patchllm` command with a config and a task instruction.
+### 2. Run a Task
+Use the `patchllm` command with a configuration name and a task instruction.
 
 ```bash
 # Apply a change using the 'default' configuration
@@ -39,26 +47,41 @@ patchllm --config default --task "Add type hints to the main function in main.py
 ```
 
 The tool will then:
-1.  Build a context from the files matching your configuration.
+1.  Build a context from the files and URLs matching your configuration.
 2.  Send the context and your task to the configured LLM.
 3.  Parse the response and automatically write the changes to the relevant files.
 
-### Other Commands
+### All Commands & Options
 
-```bash
-# List all available configurations from your configs.py
-patchllm --list-configs
+#### Configuration Management
+*   `--init`: Create a new configuration interactively.
+*   `--list-configs`: List all available configurations from your `configs.py`.
+*   `--show-config <name>`: Display the settings for a specific configuration.
 
-# Run a task using a different LLM model
-patchllm --config default --task "Refactor for clarity" --model "anthropic/claude-3-haiku"
+#### Core Task Execution
+*   `--config <name>`: The name of the configuration to use for building context.
+*   `--task "<instruction>"`: The task instruction for the LLM.
+*   `--model <model_name>`: Specify a different model (e.g., `claude-3-opus`). Defaults to `gemini/gemini-1.5-flash`.
 
-# Save the generated context to a file without sending it to the LLM
-patchllm --config default --context-out context.md --update False
-```
+#### Context Handling
+*   `--context-out [filename]`: Save the generated context to a file (defaults to `context.md`) instead of sending it to the LLM.
+*   `--context-in <filename>`: Use a previously saved context file directly, skipping context generation.
+*   `--update False`: A flag to prevent sending the prompt to the LLM. Useful when you only want to generate and save the context with `--context-out`.
+
+#### Alternative Inputs
+*   `--from-file <filename>`: Apply file patches directly from a local file instead of from an LLM response.
+*   `--from-clipboard`: Apply file patches directly from your clipboard content.
+*   `--voice True`: Use voice recognition to provide the task instruction. Requires extra dependencies.
 
 ### Setup
 
-PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood. Please refer to their documentation for setting up API keys (e.g., `OPENAI_API_KEY`) in a `.env` file and for a full list of available models.
+PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood. Please refer to their documentation for setting up API keys (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) in a `.env` file and for a full list of available models.
+
+To use the voice feature (`--voice True`), you will need to install extra dependencies:
+```bash
+pip install "speechrecognition>=3.10" "pyttsx3>=2.90"
+# Note: speechrecognition may require PyAudio, which might have system-level dependencies.
+```
 
 ## License
 
