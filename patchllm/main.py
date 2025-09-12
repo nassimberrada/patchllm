@@ -146,20 +146,24 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter
     )
 
+    parser.add_argument("-i", "--init", action="store_true", help="Create a new configuration interactively.")
+    
     parser.add_argument("-c", "--config", type=str, default=None, help="Name of the config key to use from the configs file.")
     parser.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
-    parser.add_argument("-o", "--context-out", nargs='?', const="context.md", default=None, help="Export the generated context to a file. Defaults to 'context.md'.")
-    parser.add_argument("-i", "--context-in", type=str, default=None, help="Import a previously saved context from a file.")
+    
+    parser.add_argument("-co", "--context-out", nargs='?', const="context.md", default=None, help="Export the generated context to a file. Defaults to 'context.md'.")
+    parser.add_argument("-ci", "--context-in", type=str, default=None, help="Import a previously saved context from a file.")
+    
+    parser.add_argument("-u", "--update", type=str, default="True", help="Control whether to send the context to the LLM for updates. (True/False)")
+    parser.add_argument("-ff", "--from-file", type=str, default=None, help="Apply updates directly from a file instead of the LLM.")
+    parser.add_argument("-fc", "--from-clipboard", action="store_true", help="Apply updates directly from the clipboard.")
+    
     parser.add_argument("--model", type=str, default="gemini/gemini-1.5-flash", help="Model name to use (e.g., 'gpt-4o', 'claude-3-sonnet').")
-    parser.add_argument("--from-file", type=str, default=None, help="Apply updates directly from a file instead of the LLM.")
-    parser.add_argument("--from-clipboard", action="store_true", help="Apply updates directly from the clipboard.")
-    parser.add_argument("--update", type=str, default="True", help="Control whether to send the context to the LLM for updates. (True/False)")
     parser.add_argument("--voice", type=str, default="False", help="Enable voice interaction for providing task instructions. (True/False)")
+    
     parser.add_argument("--list-configs", action="store_true", help="List all available configurations from the configs file and exit.")
     parser.add_argument("--show-config", type=str, help="Display the settings for a specific configuration and exit.")
-    parser.add_argument("--init", action="store_true", help="Create a new configuration interactively.")
-
-
+    
     args = parser.parse_args()
 
     try:
