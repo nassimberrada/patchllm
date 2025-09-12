@@ -156,9 +156,10 @@ def main():
     )
     parser.add_argument(
         "--context-out",
-        type=str,
+        nargs='?',
+        const="context.md",
         default=None,
-        help="Optional path to export the generated context to a file."
+        help="Optional path to export the generated context. Defaults to 'context.md' if no path is given."
     )
     parser.add_argument(
         "--context-in",
@@ -177,6 +178,11 @@ def main():
         type=str,
         default=None,
         help="File path for a file with pre-formatted updates."
+    )
+    parser.add_argument(
+        "--from-clipboard",
+        action="store_true",
+        help="Parse updates directly from the clipboard."
     )
     parser.add_argument(
         "--update",
@@ -213,6 +219,23 @@ def main():
             speak("Changes applied.")
         else:
             speak("Cancelled.")
+        return
+
+    # Parse updates from clipboard
+    if args.from_clipboard:
+        try:
+            import pyperclip
+            updates = pyperclip.paste()
+            if updates:
+                print("--- Parsing updates from clipboard ---")
+                paste_response(updates)
+            else:
+                print("Clipboard is empty. Nothing to parse.")
+        except ImportError:
+            print("Error: The 'pyperclip' library is required for clipboard functionality.")
+            print("Please install it using: pip install pyperclip")
+        except Exception as e:
+            print(f"An error occurred while reading from the clipboard: {e}")
         return
 
     # Parse updates from a local file
