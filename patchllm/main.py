@@ -5,6 +5,7 @@ import pprint
 import os
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.panel import Panel
 
 from .context import build_context
 from .parser import paste_response
@@ -155,6 +156,7 @@ def main():
     parser.add_argument("--update", type=str, default="True", help="Control whether to send the context to the LLM for updates. (True/False)")
     parser.add_argument("--voice", type=str, default="False", help="Enable voice interaction for providing task instructions. (True/False)")
     parser.add_argument("--list-configs", action="store_true", help="List all available configurations from the configs file and exit.")
+    parser.add_argument("--show-config", type=str, help="Display the settings for a specific configuration and exit.")
     parser.add_argument("--init", action="store_true", help="Create a new configuration interactively.")
 
 
@@ -164,7 +166,7 @@ def main():
         configs = load_from_py_file(configs_file_path, "configs")
     except FileNotFoundError:
         configs = {}
-        if not (args.init or args.list_configs):
+        if not any([args.init, args.list_configs, args.show_config]):
              console.print(f"⚠️  Config file '{configs_file_path}' not found. You can create one with the --init flag.", style="yellow")
 
 
@@ -175,6 +177,27 @@ def main():
         else:
             for config_name in configs:
                 console.print(f"  - {config_name}")
+        return
+
+    if args.show_config:
+        config_name = args.show_config
+        if not configs:
+            console.print(f"⚠️  Config file '{configs_file_path}' not found or is empty.", style="yellow")
+            return
+        
+        config_data = configs.get(config_name)
+        if config_data:
+            pretty_config = pprint.pformat(config_data, indent=2)
+            console.print(
+                Panel(
+                    pretty_config,
+                    title=f"[bold cyan]Configuration: '{config_name}'[/]",
+                    subtitle=f"[dim]from {configs_file_path}[/dim]",
+                    border_style="blue"
+                )
+            )
+        else:
+            console.print(f"❌ Configuration '[bold]{config_name}[/]' not found in '{configs_file_path}'.", style="red")
         return
 
     if args.init:
@@ -244,7 +267,7 @@ def main():
         context = read_from_file(args.context_in)
     else:
         if not args.config:
-            parser.error("A --config name is required unless using other flags like --context-in or --list-configs.")
+            parser.error("A --config name is required unless using other flags like --context-in or other utility flags.")
         context = collect_context(args.config, configs)
         if context and args.context_out:
             write_context_to_file(args.context_out, context)
