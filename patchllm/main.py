@@ -76,9 +76,9 @@ def read_from_file(file_path):
     except Exception as e:
         raise RuntimeError(f"Failed to read from file {file_path}: {e}") from e
 
-def create_new_config(configs):
-    """Interactively creates a new configuration and saves it to configs.py."""
-    print("\n--- Creating a new configuration ---")
+def create_new_config(configs, configs_file_str):
+    """Interactively creates a new configuration and saves it to the specified configs file."""
+    print(f"\n--- Creating a new configuration in '{configs_file_str}' ---")
     
     try:
         name = input("Enter a name for the new configuration: ").strip()
@@ -111,14 +111,14 @@ def create_new_config(configs):
         configs[name] = new_config_data
 
         # Write the updated configs back to the file
-        with open("configs.py", "w", encoding="utf-8") as f:
+        with open(configs_file_str, "w", encoding="utf-8") as f:
             f.write("# configs.py\n")
             f.write("configs = ")
             # Use pprint for a nicely formatted dictionary string
             f.write(pprint.pformat(configs, indent=4))
             f.write("\n")
         
-        print(f"\nSuccessfully created and saved configuration '{name}' in 'configs.py'.")
+        print(f"\nSuccessfully created and saved configuration '{name}' in '{configs_file_str}'.")
 
     except KeyboardInterrupt:
         print("\n\nConfiguration creation cancelled by user.")
@@ -135,11 +135,12 @@ def main():
     )
 
     parser.add_argument("-c", "--config", type=str, default=None, help="Name of the config key to use from the configs.py file.")
+    parser.add_argument("-f", "--configs-file", type=str, default="./configs.py", help="Path to the configuration file. Defaults to './configs.py'.")
     parser.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
     parser.add_argument("-o", "--context-out", nargs='?', const="context.md", default=None, help="Optional path to export the generated context. Defaults to 'context.md' if no path is given.")
     parser.add_argument("-i", "--context-in", type=str, default=None, help="Optional path to import a previously saved context from a file.")
-    parser.add_argument("-m", "--model", type=str, default="gemini/gemini-1.5-flash", help="Optional model name to override the default model.")
-    parser.add_argument("-f", "--from-file", type=str, default=None, help="File path for a file with pre-formatted updates.")
+    parser.add_argument("--model", type=str, default="gemini/gemini-1.5-flash", help="Optional model name to override the default model.")
+    parser.add_argument("--from-file", type=str, default=None, help="File path for a file with pre-formatted updates.")
     parser.add_argument("--from-clipboard", action="store_true", help="Parse updates directly from the clipboard.")
     parser.add_argument("--update", type=str, default="True", help="Whether to pass the input context to the llm to update the files.")
     parser.add_argument("--voice", type=str, default="False", help="Whether to interact with the script using voice commands.")
@@ -150,21 +151,21 @@ def main():
     args = parser.parse_args()
 
     try:
-        configs = load_from_py_file("./configs.py", "configs")
+        configs = load_from_py_file(args.configs_file, "configs")
     except FileNotFoundError:
         configs = {}
 
     if args.list_configs:
-        print("Available configurations in 'configs.py':")
+        print(f"Available configurations in '{args.configs_file}':")
         if not configs:
-            print("  -> No configurations found or 'configs.py' is missing.")
+            print(f"  -> No configurations found or '{args.configs_file}' is missing.")
         else:
             for config_name in configs:
                 print(f"  - {config_name}")
         return
 
     if args.init:
-        create_new_config(configs)
+        create_new_config(configs, args.configs_file)
         return
 
     if args.from_clipboard:
