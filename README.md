@@ -7,44 +7,58 @@
 </p>
 
 ## About
-PatchLLM lets you flexibly build LLM context from your codebase using search patterns, and automatically edit files from the LLM response in a couple lines of code. 
+PatchLLM is a command-line tool that lets you flexibly build LLM context from your codebase using search patterns and automatically apply file edits from the LLM response.
 
 ## Usage
-Here's a basic example of how to use the `Assistant` class:
+PatchLLM is designed to be used directly from your terminal.
+
+### 1. Define a Context
+First, define which files to include in `configs.py`. You can have multiple configurations.
 
 ```python
-from main import Assistant
-
-assistant = Assistant()
-
-context = assistant.collect(config_name="default")
->> The following files were extracted:
->> my_project
->> ├── README.md
->> ├── configs.py
->> ├── context.py
->> ├── main.py
->> ├── parser.py
->> ├── requirements.txt
->> ├── systems.py
->> └── utils.py
-
-assistant.update("Fix any bug in these files", context=context)
->> Wrote 5438 bytes to '/my_project/context.py'
->> Wrote 1999 bytes to '/my_project/utils.py'
->> Wrote 2345 bytes to '/my_project/main.py'
+# configs.py
+configs = {
+    "default": {
+        "path": ".",
+        "include_patterns": ["**/*.py"],
+        "exclude_patterns": ["**/tests/*"],
+    },
+    "docs": {
+        "path": ".",
+        "include_patterns": ["**/*.md"],
+    }
+}
 ```
 
-You can decide which files to include / exclude from the prompt by adding a config in `configs.py`, specifying:
- - `path`: The root path from which to perform the file search
- - `include_patterns`: A list of glob patterns for files to include. e.g `[./**/*]`
- - `exclude_patterns`: A list of glob patterns for files to exlucde. e.g `[./*.md]`
- - `search_word`: A list of keywords included in the target files. e.g  `["config"]`
- - `exclude_extensions`: A list of file extensions to exclude. e.g `[.jpg]`
+### 2. Run the Tool
+Use the `patchllm` command with a config and a task instruction.
+
+```bash
+# Apply a change using the 'default' configuration
+patchllm --config default --task "Add type hints to the main function in main.py"
+```
+
+The tool will then:
+1.  Build a context from the files matching your configuration.
+2.  Send the context and your task to the configured LLM.
+3.  Parse the response and automatically write the changes to the relevant files.
+
+### Other Commands
+
+```bash
+# List all available configurations from your configs.py
+patchllm --list-configs
+
+# Run a task using a different LLM model
+patchllm --config default --task "Refactor for clarity" --model "anthropic/claude-3-haiku"
+
+# Save the generated context to a file without sending it to the LLM
+patchllm --config default --context-out context.md --update False
+```
 
 ### Setup
 
-PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood. Please refer to their documentation for environment variable naming and available models.
+PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood. Please refer to their documentation for setting up API keys (e.g., `OPENAI_API_KEY`) in a `.env` file and for a full list of available models.
 
 ## License
 
