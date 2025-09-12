@@ -2,3 +2,4 @@ litellm
 python-dotenv
 SpeechRecognition
 pyttsx3
+rich

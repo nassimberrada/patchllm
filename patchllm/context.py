@@ -3,6 +3,9 @@ import glob
 import textwrap
 import sys
 from pathlib import Path
+from rich.console import Console
+
+console = Console()
 
 # --- Default Settings & Templates ---
 
@@ -70,11 +73,10 @@ def filter_files_by_keyword(file_paths: list[Path], search_words: list[str]) -> 
     matching_files = []
     for file_path in file_paths:
         try:
-            # Using pathlib's read_text for cleaner code
             if any(word in file_path.read_text(encoding='utf-8', errors='ignore') for word in search_words):
                 matching_files.append(file_path)
         except Exception as e:
-            print(f"Warning: Could not read {file_path} for keyword search: {e}", file=sys.stderr)
+            console.print(f"⚠️  Could not read {file_path} for keyword search: {e}", style="yellow")
     return matching_files
 
 
@@ -86,11 +88,8 @@ def generate_source_tree(base_path: Path, file_paths: list[Path]) -> str:
     tree = {}
     for path in file_paths:
         try:
-            # Create a path relative to the intended base_path for the tree structure
             rel_path = path.relative_to(base_path)
         except ValueError:
-            # This occurs if a file (from an absolute pattern) is outside the base_path.
-            # In this case, we use the absolute path as a fallback.
             rel_path = path
             
         level = tree
@@ -124,7 +123,6 @@ def build_context(config: dict) -> dict | None:
     Returns:
         dict: A dictionary with the source tree and formatted context, or None.
     """
-    # Resolve the base path immediately to get a predictable absolute path.
     base_path = Path(config.get("path", ".")).resolve()
     
     include_patterns = config.get("include_patterns", [])
@@ -140,19 +138,19 @@ def build_context(config: dict) -> dict | None:
     norm_ext = {ext.lower() for ext in exclude_extensions}
     relevant_files = [p for p in relevant_files if p.suffix.lower() not in norm_ext]
     if count_before_ext > len(relevant_files):
-        print(f"Filtered {count_before_ext - len(relevant_files)} files by extension.")
+        console.print(f"Filtered {count_before_ext - len(relevant_files)} files by extension.", style="cyan")
 
     # Step 3: Filter by keyword
     if search_words:
         count_before_kw = len(relevant_files)
         relevant_files = filter_files_by_keyword(relevant_files, search_words)
-        print(f"Filtered {count_before_kw - len(relevant_files)} files by keyword search.")
+        console.print(f"Filtered {count_before_kw - len(relevant_files)} files by keyword search.", style="cyan")
 
     if not relevant_files:
-        print("\nNo files matched the specified criteria.")
+        console.print("\n⚠️  No files matched the specified criteria.", style="yellow")
         return None
 
-    print(f"\nFinal count of relevant files: {len(relevant_files)}.")
+    console.print(f"\nFinal count of relevant files: {len(relevant_files)}.", style="cyan")
 
     # Generate source tree and file content blocks
     source_tree_str = generate_source_tree(base_path, relevant_files)
@@ -164,7 +162,7 @@ def build_context(config: dict) -> dict | None:
             content = file_path.read_text(encoding='utf-8')
             file_contents.append(f"<file_path:{display_path}>\n```\n{content}\n```")
         except Exception as e:
-            print(f"Warning: Could not read file {file_path}: {e}", file=sys.stderr)
+            console.print(f"⚠️  Could not read file {file_path}: {e}", style="yellow")
 
     files_content_str = "\n\n".join(file_contents)
 

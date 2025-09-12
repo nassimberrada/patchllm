@@ -1,5 +1,10 @@
 import re
 from pathlib import Path
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+
+console = Console()
 
 def paste_response(response_content):
     """
@@ -15,7 +20,10 @@ def paste_response(response_content):
     )
 
     matches = pattern.finditer(response_content)
-    files_processed = 0
+    
+    files_written = []
+    files_skipped = []
+    files_failed = []
     found_matches = False
 
     for match in matches:
@@ -24,49 +32,54 @@ def paste_response(response_content):
         code_content = match.group(2)
 
         if not file_path_str:
-            print("Warning: Found a code block with an empty file path. Skipping.")
+            console.print("⚠️ Found a code block with an empty file path. Skipping.", style="yellow")
             continue
 
-        print(f"Found path in response: '{file_path_str}'")
+        console.print(f"Found path in response: '[cyan]{file_path_str}[/]'")
         raw_path = Path(file_path_str)
         
-        # Determine the final target path.
-        # If the path from the LLM is absolute, use it directly.
-        # If it's relative, resolve it against the current working directory.
         if raw_path.is_absolute():
             target_path = raw_path
         else:
             target_path = Path.cwd() / raw_path
 
-        # Normalize the path to resolve any ".." or "." segments.
         target_path = target_path.resolve()
 
         try:
-            # Ensure parent directory exists
             target_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # If file exists, compare content to avoid unnecessary overwrites
             if target_path.exists():
                 with open(target_path, 'r', encoding='utf-8') as existing_file:
                     if existing_file.read() == code_content:
-                        print(f"  -> No changes for '{target_path}', skipping.")
+                        console.print(f"  -> No changes for '[cyan]{target_path}[/]', skipping.", style="dim")
+                        files_skipped.append(target_path)
                         continue
 
-            # Write the extracted code to the file
             with open(target_path, 'w', encoding='utf-8') as outfile:
                 outfile.write(code_content)
 
-            print(f"  -> Wrote {len(code_content)} bytes to '{target_path}'")
-            files_processed += 1
+            console.print(f"  -> ✅ Wrote {len(code_content)} bytes to '[cyan]{target_path}[/]'", style="green")
+            files_written.append(target_path)
 
         except OSError as e:
-            print(f"  -> Error writing file '{target_path}': {e}")
+            console.print(f"  -> ❌ Error writing file '[cyan]{target_path}[/]': {e}", style="red")
+            files_failed.append(target_path)
         except Exception as e:
-            print(f"  -> An unexpected error occurred for file '{target_path}': {e}")
+            console.print(f"  -> ❌ An unexpected error occurred for file '[cyan]{target_path}[/]': {e}", style="red")
+            files_failed.append(target_path)
 
+    summary_text = Text()
     if not found_matches:
-        print("\nNo file paths and code blocks matching the expected format were found in the response.")
-    elif files_processed > 0:
-        print(f"\nSuccessfully processed {files_processed} file(s).")
+        summary_text.append("No file paths and code blocks matching the expected format were found in the response.", style="yellow")
     else:
-        print("\nFound matching blocks, but no files were written.")
+        if files_written:
+            summary_text.append(f"Successfully wrote {len(files_written)} file(s).\n", style="green")
+        if files_skipped:
+            summary_text.append(f"Skipped {len(files_skipped)} file(s) (no changes).\n", style="cyan")
+        if files_failed:
+            summary_text.append(f"Failed to write {len(files_failed)} file(s).\n", style="red")
+        
+        if not any([files_written, files_skipped, files_failed]):
+             summary_text.append("Found matching blocks, but no files were processed.", style="yellow")
+
+    console.print(Panel(summary_text, title="[bold]Summary[/bold]", border_style="blue"))

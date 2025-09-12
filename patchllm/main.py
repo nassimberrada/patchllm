@@ -1,20 +1,21 @@
-import sys
 import textwrap
 import argparse
 import litellm
 import pprint
-from pathlib import Path
 from dotenv import load_dotenv
+from rich.console import Console
 
 from .context import build_context
 from .parser import paste_response
 from .utils import load_from_py_file
 
+console = Console()
+
 # --- Core Functions ---
 
 def collect_context(config_name, configs):
     """Builds the code context from a provided configuration dictionary."""
-    print("\n--- Building Code Context... ---")
+    console.print("\n--- Building Code Context... ---", style="bold")
     if not configs:
         raise FileNotFoundError("Could not find a 'configs.py' file.")
     selected_config = configs.get(config_name)
@@ -24,18 +25,18 @@ def collect_context(config_name, configs):
     context_object = build_context(selected_config)
     if context_object:
         tree, context = context_object.values()
-        print("--- Context Building Finished. The following files were extracted ---", file=sys.stderr)
-        print(tree)
+        console.print("--- Context Building Finished. The following files were extracted ---", style="bold")
+        console.print(tree)
         return context
     else:
-        print("--- Context Building Failed (No files found) ---", file=sys.stderr)
+        console.print("--- Context Building Failed (No files found) ---", style="yellow")
         return None
 
 def run_update(task_instructions, model_name, history, context=None):
     """
     Assembles the final prompt, sends it to the LLM, and applies file updates.
     """
-    print("\n--- Sending Prompt to LLM... ---")
+    console.print("\n--- Sending Prompt to LLM... ---", style="bold")
     final_prompt = task_instructions
     if context:
         final_prompt = f"{context}\n\n{task_instructions}"
@@ -43,17 +44,19 @@ def run_update(task_instructions, model_name, history, context=None):
     history.append({"role": "user", "content": final_prompt})
     
     try:
-        response = litellm.completion(model=model_name, messages=history)
+        with console.status("[bold cyan]Waiting for LLM response...", spinner="dots"):
+            response = litellm.completion(model=model_name, messages=history)
+        
         assistant_response_content = response.choices[0].message.content
         history.append({"role": "assistant", "content": assistant_response_content})
 
         if not assistant_response_content or not assistant_response_content.strip():
-            print("Response is empty. Nothing to paste.")
+            console.print("⚠️  Response is empty. Nothing to paste.", style="yellow")
             return
         
-        print("\n--- Updating files ---")
+        console.print("\n--- Updating files ---", style="bold")
         paste_response(assistant_response_content)
-        print("--- File Update Process Finished ---")
+        console.print("--- File Update Process Finished ---", style="bold")
 
     except Exception as e:
         history.pop() # Keep history clean on error
@@ -61,45 +64,46 @@ def run_update(task_instructions, model_name, history, context=None):
 
 def write_context_to_file(file_path, context):
     """Utility function to write the context to a file."""
-    print("Exporting context..")
-    with open(file_path, "w") as file:
+    console.print("Exporting context..", style="cyan")
+    with open(file_path, "w", encoding="utf-8") as file:
         file.write(context)
-    print(f'Context exported to {file_path.split("/")[-1]}')
+    console.print(f'✅ Context exported to {file_path.split("/")[-1]}', style="green")
 
 def read_from_file(file_path):
     """Utility function to read and return the content of a file."""
-    print("Importing from file..")
+    console.print(f"Importing from {file_path}..", style="cyan")
     try:
-        with open(file_path, "r") as file:
-            print("Finished reading")
-            return file.read()
+        with open(file_path, "r", encoding="utf-8") as file:
+            content = file.read()
+            console.print("✅ Finished reading file.", style="green")
+            return content
     except Exception as e:
         raise RuntimeError(f"Failed to read from file {file_path}: {e}") from e
 
 def create_new_config(configs, configs_file_str):
     """Interactively creates a new configuration and saves it to the specified configs file."""
-    print(f"\n--- Creating a new configuration in '{configs_file_str}' ---")
+    console.print(f"\n--- Creating a new configuration in '{configs_file_str}' ---", style="bold")
     
     try:
-        name = input("Enter a name for the new configuration: ").strip()
+        name = console.input("[bold]Enter a name for the new configuration: [/]").strip()
         if not name:
-            print("Configuration name cannot be empty.")
+            console.print("❌ Configuration name cannot be empty.", style="red")
             return
 
         if name in configs:
-            overwrite = input(f"Configuration '{name}' already exists. Overwrite? (y/n): ").lower()
+            overwrite = console.input(f"Configuration '[bold]{name}[/]' already exists. Overwrite? (y/n): ").lower()
             if overwrite not in ['y', 'yes']:
-                print("Operation cancelled.")
+                console.print("Operation cancelled.", style="yellow")
                 return
 
-        path = input("Enter the base path (e.g., '.' for current directory): ").strip() or "."
+        path = console.input("[bold]Enter the base path[/] (e.g., '.' for current directory): ").strip() or "."
         
-        print("Enter comma-separated glob patterns for files to include (e.g., **/*.py, src/**/*.js):")
-        include_raw = input("> ").strip()
+        console.print("\nEnter comma-separated glob patterns for files to include.")
+        include_raw = console.input('[cyan]> (e.g., "[bold]**/*.py, src/**/*.js[/]"): [/]').strip()
         include_patterns = [p.strip() for p in include_raw.split(',') if p.strip()]
 
-        print("Enter comma-separated glob patterns for files to exclude (e.g., **/tests/*, venv/*):")
-        exclude_raw = input("> ").strip()
+        console.print("\nEnter comma-separated glob patterns for files to exclude (optional).")
+        exclude_raw = console.input('[cyan]> (e.g., "[bold]**/tests/*, venv/*[/]"): [/]').strip()
         exclude_patterns = [p.strip() for p in exclude_raw.split(',') if p.strip()]
 
         new_config_data = {
@@ -110,18 +114,16 @@ def create_new_config(configs, configs_file_str):
 
         configs[name] = new_config_data
 
-        # Write the updated configs back to the file
         with open(configs_file_str, "w", encoding="utf-8") as f:
             f.write("# configs.py\n")
             f.write("configs = ")
-            # Use pprint for a nicely formatted dictionary string
             f.write(pprint.pformat(configs, indent=4))
             f.write("\n")
         
-        print(f"\nSuccessfully created and saved configuration '{name}' in '{configs_file_str}'.")
+        console.print(f"\n✅ Successfully created and saved configuration '[bold]{name}[/]' in '[bold]{configs_file_str}[/]'.", style="green")
 
     except KeyboardInterrupt:
-        print("\n\nConfiguration creation cancelled by user.")
+        console.print("\n\n⚠️ Configuration creation cancelled by user.", style="yellow")
         return
 
 def main():
@@ -131,20 +133,21 @@ def main():
     load_dotenv()
     
     parser = argparse.ArgumentParser(
-        description="A CLI tool to apply code changes using an LLM."
+        description="A CLI tool to apply code changes using an LLM.",
+        formatter_class=argparse.RawTextHelpFormatter
     )
 
     parser.add_argument("-c", "--config", type=str, default=None, help="Name of the config key to use from the configs.py file.")
     parser.add_argument("-f", "--configs-file", type=str, default="./configs.py", help="Path to the configuration file. Defaults to './configs.py'.")
     parser.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
-    parser.add_argument("-o", "--context-out", nargs='?', const="context.md", default=None, help="Optional path to export the generated context. Defaults to 'context.md' if no path is given.")
-    parser.add_argument("-i", "--context-in", type=str, default=None, help="Optional path to import a previously saved context from a file.")
-    parser.add_argument("--model", type=str, default="gemini/gemini-1.5-flash", help="Optional model name to override the default model.")
-    parser.add_argument("--from-file", type=str, default=None, help="File path for a file with pre-formatted updates.")
-    parser.add_argument("--from-clipboard", action="store_true", help="Parse updates directly from the clipboard.")
-    parser.add_argument("--update", type=str, default="True", help="Whether to pass the input context to the llm to update the files.")
-    parser.add_argument("--voice", type=str, default="False", help="Whether to interact with the script using voice commands.")
-    parser.add_argument("--list-configs", action="store_true", help="List all available configuration keys from the configs file and exit.")
+    parser.add_argument("-o", "--context-out", nargs='?', const="context.md", default=None, help="Export the generated context to a file. Defaults to 'context.md'.")
+    parser.add_argument("-i", "--context-in", type=str, default=None, help="Import a previously saved context from a file.")
+    parser.add_argument("--model", type=str, default="gemini/gemini-1.5-flash", help="Model name to use (e.g., 'gpt-4o', 'claude-3-sonnet').")
+    parser.add_argument("--from-file", type=str, default=None, help="Apply updates directly from a file instead of the LLM.")
+    parser.add_argument("--from-clipboard", action="store_true", help="Apply updates directly from the clipboard.")
+    parser.add_argument("--update", type=str, default="True", help="Control whether to send the context to the LLM for updates. (True/False)")
+    parser.add_argument("--voice", type=str, default="False", help="Enable voice interaction for providing task instructions. (True/False)")
+    parser.add_argument("--list-configs", action="store_true", help="List all available configurations from the configs file and exit.")
     parser.add_argument("--init", action="store_true", help="Create a new configuration interactively.")
 
 
@@ -154,14 +157,17 @@ def main():
         configs = load_from_py_file(args.configs_file, "configs")
     except FileNotFoundError:
         configs = {}
+        if not (args.init or args.list_configs):
+             console.print(f"⚠️  Config file '{args.configs_file}' not found. You can create one with the --init flag.", style="yellow")
+
 
     if args.list_configs:
-        print(f"Available configurations in '{args.configs_file}':")
+        console.print(f"Available configurations in '[bold]{args.configs_file}[/]':", style="bold")
         if not configs:
-            print(f"  -> No configurations found or '{args.configs_file}' is missing.")
+            console.print(f"  -> No configurations found or '{args.configs_file}' is missing.")
         else:
             for config_name in configs:
-                print(f"  - {config_name}")
+                console.print(f"  - {config_name}")
         return
 
     if args.init:
@@ -173,15 +179,15 @@ def main():
             import pyperclip
             updates = pyperclip.paste()
             if updates:
-                print("--- Parsing updates from clipboard ---")
+                console.print("--- Parsing updates from clipboard ---", style="bold")
                 paste_response(updates)
             else:
-                print("Clipboard is empty. Nothing to parse.")
+                console.print("⚠️ Clipboard is empty. Nothing to parse.", style="yellow")
         except ImportError:
-            print("Error: The 'pyperclip' library is required for clipboard functionality.", file=sys.stderr)
-            print("Please install it using: pip install pyperclip", file=sys.stderr)
+            console.print("❌ The 'pyperclip' library is required for clipboard functionality.", style="red")
+            console.print("Please install it using: pip install pyperclip", style="cyan")
         except Exception as e:
-            print(f"An error occurred while reading from the clipboard: {e}", file=sys.stderr)
+            console.print(f"❌ An error occurred while reading from the clipboard: {e}", style="red")
         return
 
     if args.from_file:
@@ -233,13 +239,14 @@ def main():
         if not args.config:
             parser.error("A --config name is required unless using other flags like --context-in or --list-configs.")
         context = collect_context(args.config, configs)
-        if args.context_out:
+        if context and args.context_out:
             write_context_to_file(args.context_out, context)
 
     if args.update not in ["False", "false"]:
         if not args.task:
             parser.error("The --task argument is required to generate updates.")
-        run_update(args.task, args.model, history, context)
+        if context:
+            run_update(args.task, args.model, history, context)
 
 if __name__ == "__main__":
     main()
