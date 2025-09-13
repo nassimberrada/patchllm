@@ -34,9 +34,9 @@ def collect_context(config_name, configs):
         console.print("--- Context Building Failed (No files found) ---", style="yellow")
         return None
 
-def run_update(task_instructions, model_name, history, context=None):
+def run_llm_query(task_instructions, model_name, history, context=None):
     """
-    Assembles the final prompt, sends it to the LLM, and applies file updates.
+    Assembles the final prompt, sends it to the LLM, and returns the response.
     """
     console.print("\n--- Sending Prompt to LLM... ---", style="bold")
     final_prompt = task_instructions
@@ -53,23 +53,24 @@ def run_update(task_instructions, model_name, history, context=None):
         history.append({"role": "assistant", "content": assistant_response_content})
 
         if not assistant_response_content or not assistant_response_content.strip():
-            console.print("⚠️  Response is empty. Nothing to paste.", style="yellow")
-            return
+            console.print("⚠️  Response is empty. Nothing to process.", style="yellow")
+            return None
         
-        console.print("\n--- Updating files ---", style="bold")
-        paste_response(assistant_response_content)
-        console.print("--- File Update Process Finished ---", style="bold")
+        return assistant_response_content
 
     except Exception as e:
         history.pop() # Keep history clean on error
         raise RuntimeError(f"An error occurred while communicating with the LLM via litellm: {e}") from e
 
-def write_context_to_file(file_path, context):
-    """Utility function to write the context to a file."""
-    console.print("Exporting context..", style="cyan")
-    with open(file_path, "w", encoding="utf-8") as file:
-        file.write(context)
-    console.print(f'✅ Context exported to {file_path.split("/")[-1]}', style="green")
+def write_to_file(file_path, content):
+    """Utility function to write content to a file."""
+    console.print(f"Writing to {file_path}..", style="cyan")
+    try:
+        with open(file_path, "w", encoding="utf-8") as file:
+            file.write(content)
+        console.print(f'✅ Content saved to {file_path}', style="green")
+    except Exception as e:
+        raise RuntimeError(f"Failed to write to file {file_path}: {e}") from e
 
 def read_from_file(file_path):
     """Utility function to read and return the content of a file."""
@@ -154,7 +155,10 @@ def main():
     parser.add_argument("-co", "--context-out", nargs='?', const="context.md", default=None, help="Export the generated context to a file. Defaults to 'context.md'.")
     parser.add_argument("-ci", "--context-in", type=str, default=None, help="Import a previously saved context from a file.")
     
-    parser.add_argument("-u", "--update", type=str, default="True", help="Control whether to send the context to the LLM for updates. (True/False)")
+    parser.add_argument("--patch", action="store_true", help="Query the LLM and directly apply the file updates from the response. Requires --task.")
+    parser.add_argument("--to-file", nargs='?', const="llm_response.md", default=None, help="Query the LLM and save the response to a file. Requires --task. Defaults to 'llm_response.md'.")
+    parser.add_argument("--to-clipboard", action="store_true", help="Query the LLM and save the response to the clipboard. Requires --task.")
+
     parser.add_argument("-ff", "--from-file", type=str, default=None, help="Apply updates directly from a file instead of the LLM.")
     parser.add_argument("-fc", "--from-clipboard", action="store_true", help="Apply updates directly from the clipboard.")
     
@@ -260,27 +264,63 @@ def main():
         speak(f"You said: {task}. Should I proceed?")
         confirm = listen()
         if confirm and "yes" in confirm.lower():
+            if not args.config:
+                parser.error("A --config name is required when using --voice.")
             context = collect_context(args.config, configs)
-            run_update(task, args.model, history, context)
-            speak("Changes applied.")
+            llm_response = run_llm_query(task, args.model, history, context)
+            if llm_response:
+                paste_response(llm_response)
+                speak("Changes applied.")
         else:
             speak("Cancelled.")
         return
 
-    if args.context_in:
-        context = read_from_file(args.context_in)
-    else:
-        if not args.config:
-            parser.error("A --config name is required unless using other flags like --context-in or other utility flags.")
-        context = collect_context(args.config, configs)
-        if context and args.context_out:
-            write_context_to_file(args.context_out, context)
+    # --- Main LLM Task Logic ---
+    if args.task:
+        action_flags = [args.patch, args.to_file is not None, args.to_clipboard]
+        if sum(action_flags) == 0:
+            parser.error("A task was provided, but no action was specified. Use --patch, --to-file, or --to-clipboard.")
+        if sum(action_flags) > 1:
+            parser.error("Please specify only one action: --patch, --to-file, or --to-clipboard.")
 
-    if args.update not in ["False", "false"]:
-        if not args.task:
-            parser.error("The --task argument is required to generate updates.")
+        if args.context_in:
+            context = read_from_file(args.context_in)
+        else:
+            if not args.config:
+                parser.error("A --config name is required to build context for a task.")
+            context = collect_context(args.config, configs)
+            if context and args.context_out:
+                write_to_file(args.context_out, context)
+
+        if not context:
+            console.print("Proceeding with task but without any file context.", style="yellow")
+
+        llm_response = run_llm_query(args.task, args.model, history, context)
+
+        if llm_response:
+            if args.patch:
+                console.print("\n--- Updating files ---", style="bold")
+                paste_response(llm_response)
+                console.print("--- File Update Process Finished ---", style="bold")
+            
+            elif args.to_file is not None:
+                write_to_file(args.to_file, llm_response)
+
+            elif args.to_clipboard:
+                try:
+                    import pyperclip
+                    pyperclip.copy(llm_response)
+                    console.print("✅ Copied LLM response to clipboard.", style="green")
+                except ImportError:
+                    console.print("❌ The 'pyperclip' library is required for clipboard functionality.", style="red")
+                    console.print("Please install it using: pip install pyperclip", style="cyan")
+                except Exception as e:
+                    console.print(f"❌ An error occurred while copying to the clipboard: {e}", style="red")
+    
+    elif args.config and args.context_out:
+        context = collect_context(args.config, configs)
         if context:
-            run_update(args.task, args.model, history, context)
+            write_to_file(args.context_out, context)
 
 if __name__ == "__main__":
     main()
