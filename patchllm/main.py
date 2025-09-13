@@ -109,15 +109,10 @@ def create_new_scope(scopes, scopes_file_str):
         exclude_raw = console.input('[cyan]> (e.g., "[bold]**/tests/*, venv/*[/]"): [/]').strip()
         exclude_patterns = [p.strip() for p in exclude_raw.split(',') if p.strip()]
         
-        console.print("\nEnter comma-separated URLs to include as context (optional).")
-        urls_raw = console.input('[cyan]> (e.g., "[bold]https://docs.example.com, ...[/]"): [/]').strip()
-        urls = [u.strip() for u in urls_raw.split(',') if u.strip()]
-
         new_scope_data = {
             "path": path,
             "include_patterns": include_patterns,
-            "exclude_patterns": exclude_patterns,
-            "urls": urls,
+            "exclude_patterns": exclude_patterns
         }
 
         scopes[name] = new_scope_data
