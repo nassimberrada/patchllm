@@ -47,5 +47,5 @@ dist/
 *.patch
 *.venv
 
-# Configs
-configs.py
+# Scopes
+scopes.py

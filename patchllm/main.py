@@ -15,16 +15,16 @@ console = Console()
 
 # --- Core Functions ---
 
-def collect_context(config_name, configs):
-    """Builds the code context from a provided configuration dictionary."""
+def collect_context(scope_name, scopes):
+    """Builds the code context from a provided scope dictionary."""
     console.print("\n--- Building Code Context... ---", style="bold")
-    if not configs:
-        raise FileNotFoundError("Could not find a 'configs.py' file.")
-    selected_config = configs.get(config_name)
-    if selected_config is None:
-        raise KeyError(f"Context config '{config_name}' not found in provided configs file.")
+    if not scopes:
+        raise FileNotFoundError("Could not find a 'scopes.py' file.")
+    selected_scope = scopes.get(scope_name)
+    if selected_scope is None:
+        raise KeyError(f"Context scope '{scope_name}' not found in provided scopes file.")
     
-    context_object = build_context(selected_config)
+    context_object = build_context(selected_scope)
     if context_object:
         tree, context = context_object.values()
         console.print("--- Context Building Finished. The following files were extracted ---", style="bold")
@@ -83,18 +83,18 @@ def read_from_file(file_path):
     except Exception as e:
         raise RuntimeError(f"Failed to read from file {file_path}: {e}") from e
 
-def create_new_config(configs, configs_file_str):
-    """Interactively creates a new configuration and saves it to the specified configs file."""
-    console.print(f"\n--- Creating a new configuration in '{configs_file_str}' ---", style="bold")
+def create_new_scope(scopes, scopes_file_str):
+    """Interactively creates a new scope and saves it to the specified scopes file."""
+    console.print(f"\n--- Creating a new scope in '{scopes_file_str}' ---", style="bold")
     
     try:
-        name = console.input("[bold]Enter a name for the new configuration: [/]").strip()
+        name = console.input("[bold]Enter a name for the new scope: [/]").strip()
         if not name:
-            console.print("❌ Configuration name cannot be empty.", style="red")
+            console.print("❌ Scope name cannot be empty.", style="red")
             return
 
-        if name in configs:
-            overwrite = console.input(f"Configuration '[bold]{name}[/]' already exists. Overwrite? (y/n): ").lower()
+        if name in scopes:
+            overwrite = console.input(f"Scope '[bold]{name}[/]' already exists. Overwrite? (y/n): ").lower()
             if overwrite not in ['y', 'yes']:
                 console.print("Operation cancelled.", style="yellow")
                 return
@@ -113,25 +113,25 @@ def create_new_config(configs, configs_file_str):
         urls_raw = console.input('[cyan]> (e.g., "[bold]https://docs.example.com, ...[/]"): [/]').strip()
         urls = [u.strip() for u in urls_raw.split(',') if u.strip()]
 
-        new_config_data = {
+        new_scope_data = {
             "path": path,
             "include_patterns": include_patterns,
             "exclude_patterns": exclude_patterns,
             "urls": urls,
         }
 
-        configs[name] = new_config_data
+        scopes[name] = new_scope_data
 
-        with open(configs_file_str, "w", encoding="utf-8") as f:
-            f.write("# configs.py\n")
-            f.write("configs = ")
-            f.write(pprint.pformat(configs, indent=4))
+        with open(scopes_file_str, "w", encoding="utf-8") as f:
+            f.write("# scopes.py\n")
+            f.write("scopes = ")
+            f.write(pprint.pformat(scopes, indent=4))
             f.write("\n")
         
-        console.print(f"\n✅ Successfully created and saved configuration '[bold]{name}[/]' in '[bold]{configs_file_str}[/]'.", style="green")
+        console.print(f"\n✅ Successfully created and saved scope '[bold]{name}[/]' in '[bold]{scopes_file_str}[/]'.", style="green")
 
     except KeyboardInterrupt:
-        console.print("\n\n⚠️ Configuration creation cancelled by user.", style="yellow")
+        console.print("\n\n⚠️ Scope creation cancelled by user.", style="yellow")
         return
 
 def main():
@@ -140,76 +140,81 @@ def main():
     """
     load_dotenv()
     
-    configs_file_path = os.getenv("PATCHLLM_CONFIGS_FILE", "./configs.py")
+    scopes_file_path = os.getenv("PATCHLLM_SCOPES_FILE", "./scopes.py")
 
     parser = argparse.ArgumentParser(
         description="A CLI tool to apply code changes using an LLM.",
         formatter_class=argparse.RawTextHelpFormatter
     )
 
-    parser.add_argument("-i", "--init", action="store_true", help="Create a new configuration interactively.")
-    
-    parser.add_argument("-c", "--config", type=str, default=None, help="Name of the config key to use from the configs file.")
-    parser.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
-    
-    parser.add_argument("-co", "--context-out", nargs='?', const="context.md", default=None, help="Export the generated context to a file. Defaults to 'context.md'.")
-    parser.add_argument("-ci", "--context-in", type=str, default=None, help="Import a previously saved context from a file.")
-    
-    parser.add_argument("--patch", action="store_true", help="Query the LLM and directly apply the file updates from the response. Requires --task.")
-    parser.add_argument("--to-file", nargs='?', const="llm_response.md", default=None, help="Query the LLM and save the response to a file. Requires --task. Defaults to 'llm_response.md'.")
-    parser.add_argument("--to-clipboard", action="store_true", help="Query the LLM and save the response to the clipboard. Requires --task.")
+    # --- Group: Core Patching Flow ---
+    patch_group = parser.add_argument_group('Core Patching Flow')
+    patch_group.add_argument("-s", "--scope", type=str, default=None, help="Name of the scope to use from the scopes file.")
+    patch_group.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
+    patch_group.add_argument("-p", "--patch", action="store_true", help="Query the LLM and directly apply the file updates from the response. Requires --task.")
 
-    parser.add_argument("-ff", "--from-file", type=str, default=None, help="Apply updates directly from a file instead of the LLM.")
-    parser.add_argument("-fc", "--from-clipboard", action="store_true", help="Apply updates directly from the clipboard.")
+    # --- Group: Scope Management ---
+    scope_group = parser.add_argument_group('Scope Management')
+    scope_group.add_argument("-i", "--init", action="store_true", help="Create a new scope interactively.")
+    scope_group.add_argument("-sl", "--list-scopes", action="store_true", help="List all available scopes from the scopes file and exit.")
+    scope_group.add_argument("-ss", "--show-scope", type=str, help="Display the settings for a specific scope and exit.")
+
+    # --- Group: I/O Utils---
+    code_io = parser.add_argument_group('Code I/O')
+    code_io.add_argument("-co", "--context-out", nargs='?', const="context.md", default=None, help="Export the generated context to a file. Defaults to 'context.md'.")
+    code_io.add_argument("-ci", "--context-in", type=str, default=None, help="Import a previously saved context from a file.")
+    code_io.add_argument("-tf", "--to-file", nargs='?', const="response.md", default=None, help="Query the LLM and save the response to a file. Requires --task. Defaults to 'response.md'.")
+    code_io.add_argument("-tc", "--to-clipboard", action="store_true", help="Query the LLM and save the response to the clipboard. Requires --task.")
+    code_io.add_argument("-ff", "--from-file", type=str, default=None, help="Apply code updates directly from a file.")
+    code_io.add_argument("-fc", "--from-clipboard", action="store_true", help="Apply code updates directly from the clipboard.")
     
-    parser.add_argument("--model", type=str, default="gemini/gemini-1.5-flash", help="Model name to use (e.g., 'gpt-4o', 'claude-3-sonnet').")
-    parser.add_argument("--voice", type=str, default="False", help="Enable voice interaction for providing task instructions. (True/False)")
-    
-    parser.add_argument("--list-configs", action="store_true", help="List all available configurations from the configs file and exit.")
-    parser.add_argument("--show-config", type=str, help="Display the settings for a specific configuration and exit.")
+    # --- Group: General Options ---
+    options_group = parser.add_argument_group('General Options')
+    options_group.add_argument("-m", "--model", type=str, default="gemini/gemini-2.5-flash", help="Model name to use (e.g., 'gpt-4o', 'claude-3-sonnet').")
+    options_group.add_argument("-v", "--voice", type=str, default="False", help="Enable voice interaction for providing task instructions. (True/False)")
     
     args = parser.parse_args()
 
     try:
-        configs = load_from_py_file(configs_file_path, "configs")
+        scopes = load_from_py_file(scopes_file_path, "scopes")
     except FileNotFoundError:
-        configs = {}
-        if not any([args.init, args.list_configs, args.show_config]):
-             console.print(f"⚠️  Config file '{configs_file_path}' not found. You can create one with the --init flag.", style="yellow")
+        scopes = {}
+        if not any([args.init, args.list_scopes, args.show_scope]):
+             console.print(f"⚠️  Scope file '{scopes_file_path}' not found. You can create one with the --init flag.", style="yellow")
 
 
-    if args.list_configs:
-        console.print(f"Available configurations in '[bold]{configs_file_path}[/]':", style="bold")
-        if not configs:
-            console.print(f"  -> No configurations found or '{configs_file_path}' is missing.")
+    if args.list_scopes:
+        console.print(f"Available scopes in '[bold]{scopes_file_path}[/]':", style="bold")
+        if not scopes:
+            console.print(f"  -> No scopes found or '{scopes_file_path}' is missing.")
         else:
-            for config_name in configs:
-                console.print(f"  - {config_name}")
+            for scope_name in scopes:
+                console.print(f"  - {scope_name}")
         return
 
-    if args.show_config:
-        config_name = args.show_config
-        if not configs:
-            console.print(f"⚠️  Config file '{configs_file_path}' not found or is empty.", style="yellow")
+    if args.show_scope:
+        scope_name = args.show_scope
+        if not scopes:
+            console.print(f"⚠️  Scope file '{scopes_file_path}' not found or is empty.", style="yellow")
             return
         
-        config_data = configs.get(config_name)
-        if config_data:
-            pretty_config = pprint.pformat(config_data, indent=2)
+        scope_data = scopes.get(scope_name)
+        if scope_data:
+            pretty_scope = pprint.pformat(scope_data, indent=2)
             console.print(
                 Panel(
-                    pretty_config,
-                    title=f"[bold cyan]Configuration: '{config_name}'[/]",
-                    subtitle=f"[dim]from {configs_file_path}[/dim]",
+                    pretty_scope,
+                    title=f"[bold cyan]Scope: '{scope_name}'[/]",
+                    subtitle=f"[dim]from {scopes_file_path}[/dim]",
                     border_style="blue"
                 )
             )
         else:
-            console.print(f"❌ Configuration '[bold]{config_name}[/]' not found in '{configs_file_path}'.", style="red")
+            console.print(f"❌ Scope '[bold]{scope_name}[/]' not found in '{scopes_file_path}'.", style="red")
         return
 
     if args.init:
-        create_new_config(configs, configs_file_path)
+        create_new_scope(scopes, scopes_file_path)
         return
 
     if args.from_clipboard:
@@ -264,9 +269,9 @@ def main():
         speak(f"You said: {task}. Should I proceed?")
         confirm = listen()
         if confirm and "yes" in confirm.lower():
-            if not args.config:
-                parser.error("A --config name is required when using --voice.")
-            context = collect_context(args.config, configs)
+            if not args.scope:
+                parser.error("A --scope name is required when using --voice.")
+            context = collect_context(args.scope, scopes)
             llm_response = run_llm_query(task, args.model, history, context)
             if llm_response:
                 paste_response(llm_response)
@@ -286,9 +291,9 @@ def main():
         if args.context_in:
             context = read_from_file(args.context_in)
         else:
-            if not args.config:
-                parser.error("A --config name is required to build context for a task.")
-            context = collect_context(args.config, configs)
+            if not args.scope:
+                parser.error("A --scope name is required to build context for a task.")
+            context = collect_context(args.scope, scopes)
             if context and args.context_out:
                 write_to_file(args.context_out, context)
 
@@ -317,8 +322,8 @@ def main():
                 except Exception as e:
                     console.print(f"❌ An error occurred while copying to the clipboard: {e}", style="red")
     
-    elif args.config and args.context_out:
-        context = collect_context(args.config, configs)
+    elif args.scope and args.context_out:
+        context = collect_context(args.scope, scopes)
         if context:
             write_to_file(args.context_out, context)
 

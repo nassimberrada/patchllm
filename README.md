@@ -10,21 +10,21 @@
 PatchLLM is a command-line tool that lets you flexibly build LLM context from your codebase using glob patterns, URLs, and keyword searches. It then automatically applies file edits directly from the LLM's response.
 
 ## Usage
-PatchLLM is designed to be used directly from your terminal.
+PatchLLM is designed to be used directly from your terminal. The core workflow is to define a **scope** of files, provide a **task**, and choose an **action** (like patching files directly).
 
-### 1. Initialize a Configuration
-The easiest way to get started is to run the interactive initializer. This will create a `configs.py` file for you.
+### 1. Initialize a Scope
+The easiest way to get started is to run the interactive initializer. This will create a `scopes.py` file for you, which holds your saved scopes.
 
 ```bash
 patchllm --init
 ```
 
-This will guide you through creating your first context configuration, including setting a base path and file patterns. You can add multiple configurations to this file.
+This will guide you through creating your first scope, including setting a base path and file patterns. You can add multiple scopes to this file for different projects or tasks.
 
-A generated `configs.py` might look like this:
+A generated `scopes.py` might look like this:
 ```python
-# configs.py
-configs = {
+# scopes.py
+scopes = {
     "default": {
         "path": ".",
         "include_patterns": ["**/*.py"],
@@ -39,45 +39,47 @@ configs = {
 ```
 
 ### 2. Run a Task
-Use the `patchllm` command with a configuration name and a task instruction.
+Use the `patchllm` command with a scope, a task, and an action flag like `--patch` (`-p`).
 
 ```bash
-# Apply a change using the 'default' configuration
-patchllm --config default --task "Add type hints to the main function in main.py"
+# Apply a change using the 'default' scope and the --patch action
+patchllm -s default -t "Add type hints to the main function in main.py" -p
 ```
 
 The tool will then:
-1.  Build a context from the files and URLs matching your configuration.
+1.  Build a context from the files and URLs matching your `default` scope.
 2.  Send the context and your task to the configured LLM.
 3.  Parse the response and automatically write the changes to the relevant files.
 
 ### All Commands & Options
 
-#### Configuration Management
-*   `--init`: Create a new configuration interactively.
-*   `--list-configs`: List all available configurations from your `configs.py`.
-*   `--show-config <name>`: Display the settings for a specific configuration.
+#### Core Patching Flow
+*   `-s, --scope <name>`: Name of the scope to use from your `scopes.py` file.
+*   `-t, --task "<instruction>"`: The task instruction for the LLM.
+*   `-p, --patch`: Query the LLM and directly apply the file updates from the response. **This is the main action flag.**
 
-#### Core Task Execution
-*   `--config <name>`: The name of the configuration to use for building context.
-*   `--task "<instruction>"`: The task instruction for the LLM.
-*   `--model <model_name>`: Specify a different model (e.g., `claude-3-opus`). Defaults to `gemini/gemini-1.5-flash`.
+#### Scope Management
+*   `-i, --init`: Create a new scope interactively.
+*   `-sl, --list-scopes`: List all available scopes from your `scopes.py` file.
+*   `-ss, --show-scope <name>`: Display the settings for a specific scope.
 
-#### Context Handling
-*   `--context-out [filename]`: Save the generated context to a file (defaults to `context.md`) instead of sending it to the LLM.
-*   `--context-in <filename>`: Use a previously saved context file directly, skipping context generation.
-*   `--update False`: A flag to prevent sending the prompt to the LLM. Useful when you only want to generate and save the context with `--context-out`.
+#### I/O & Context Management
+*   `-co, --context-out [filename]`: Export the generated context to a file (defaults to `context.md`) instead of running a task.
+*   `-ci, --context-in <filename>`: Use a previously saved context file as input for a task.
+*   `-tf, --to-file [filename]`: Send the LLM response to a file (defaults to `response.md`) instead of patching directly.
+*   `-tc, --to-clipboard`: Copy the LLM response to the clipboard.
+*   `-ff, --from-file <filename>`: Apply patches from a local file instead of an LLM response.
+*   `-fc, --from-clipboard`: Apply patches directly from your clipboard content.
 
-#### Alternative Inputs
-*   `--from-file <filename>`: Apply file patches directly from a local file instead of from an LLM response.
-*   `--from-clipboard`: Apply file patches directly from your clipboard content.
-*   `--voice True`: Use voice recognition to provide the task instruction. Requires extra dependencies.
+#### General Options
+*   `--model <model_name>`: Specify a different model (e.g., `gpt-4o`). Defaults to `gemini/gemini-1.5-flash`.
+*   `--voice`: Enable voice recognition to provide the task instruction.
 
 ### Setup
 
 PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood. Please refer to their documentation for setting up API keys (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) in a `.env` file and for a full list of available models.
 
-To use the voice feature (`--voice True`), you will need to install extra dependencies:
+To use the voice feature (`--voice`), you will need to install extra dependencies:
 ```bash
 pip install "speechrecognition>=3.10" "pyttsx3>=2.90"
 # Note: speechrecognition may require PyAudio, which might have system-level dependencies.

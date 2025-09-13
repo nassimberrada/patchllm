@@ -175,23 +175,23 @@ def fetch_and_process_urls(urls: list[str]) -> str:
 
 # --- Main Context Building Function ---
 
-def build_context(config: dict) -> dict | None:
+def build_context(scope: dict) -> dict | None:
     """
-    Builds the context string from files specified in the config.
+    Builds the context string from files specified in the scope.
 
     Args:
-        config (dict): The configuration for file searching.
+        scope (dict): The scope for file searching.
 
     Returns:
         dict: A dictionary with the source tree and formatted context, or None.
     """
-    base_path = Path(config.get("path", ".")).resolve()
+    base_path = Path(scope.get("path", ".")).resolve()
     
-    include_patterns = config.get("include_patterns", [])
-    exclude_patterns = config.get("exclude_patterns", [])
-    exclude_extensions = config.get("exclude_extensions", DEFAULT_EXCLUDE_EXTENSIONS)
-    search_words = config.get("search_words", [])
-    urls = config.get("urls", [])
+    include_patterns = scope.get("include_patterns", [])
+    exclude_patterns = scope.get("exclude_patterns", [])
+    exclude_extensions = scope.get("exclude_extensions", DEFAULT_EXCLUDE_EXTENSIONS)
+    search_words = scope.get("search_words", [])
+    urls = scope.get("urls", [])
 
     # Step 1: Find files
     relevant_files = find_files(base_path, include_patterns, exclude_patterns)
