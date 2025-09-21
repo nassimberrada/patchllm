@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
+from pathlib import Path
 
 from .context import build_context
 from .parser import paste_response
@@ -83,52 +84,6 @@ def read_from_file(file_path):
     except Exception as e:
         raise RuntimeError(f"Failed to read from file {file_path}: {e}") from e
 
-def create_new_scope(scopes, scopes_file_str):
-    """Interactively creates a new scope and saves it to the specified scopes file."""
-    console.print(f"\n--- Creating a new scope in '{scopes_file_str}' ---", style="bold")
-    
-    try:
-        name = console.input("[bold]Enter a name for the new scope: [/]").strip()
-        if not name:
-            console.print("❌ Scope name cannot be empty.", style="red")
-            return
-
-        if name in scopes:
-            overwrite = console.input(f"Scope '[bold]{name}[/]' already exists. Overwrite? (y/n): ").lower()
-            if overwrite not in ['y', 'yes']:
-                console.print("Operation cancelled.", style="yellow")
-                return
-
-        path = console.input("[bold]Enter the base path[/] (e.g., '.' for current directory): ").strip() or "."
-        
-        console.print("\nEnter comma-separated glob patterns for files to include.")
-        include_raw = console.input('[cyan]> (e.g., "[bold]**/*.py, src/**/*.js[/]"): [/]').strip()
-        include_patterns = [p.strip() for p in include_raw.split(',') if p.strip()]
-
-        console.print("\nEnter comma-separated glob patterns for files to exclude (optional).")
-        exclude_raw = console.input('[cyan]> (e.g., "[bold]**/tests/*, venv/*[/]"): [/]').strip()
-        exclude_patterns = [p.strip() for p in exclude_raw.split(',') if p.strip()]
-        
-        new_scope_data = {
-            "path": path,
-            "include_patterns": include_patterns,
-            "exclude_patterns": exclude_patterns
-        }
-
-        scopes[name] = new_scope_data
-
-        with open(scopes_file_str, "w", encoding="utf-8") as f:
-            f.write("# scopes.py\n")
-            f.write("scopes = ")
-            f.write(pprint.pformat(scopes, indent=4))
-            f.write("\n")
-        
-        console.print(f"\n✅ Successfully created and saved scope '[bold]{name}[/]' in '[bold]{scopes_file_str}[/]'.", style="green")
-
-    except KeyboardInterrupt:
-        console.print("\n\n⚠️ Scope creation cancelled by user.", style="yellow")
-        return
-
 def main():
     """
     Main entry point for the patchllm command-line tool.
@@ -150,7 +105,7 @@ def main():
 
     # --- Group: Scope Management ---
     scope_group = parser.add_argument_group('Scope Management')
-    scope_group.add_argument("-i", "--init", action="store_true", help="Create a new scope interactively.")
+    scope_group.add_argument("-i", "--init", action="store_true", help="Create a default 'scopes.py' file with a 'base' scope.")
     scope_group.add_argument("-sl", "--list-scopes", action="store_true", help="List all available scopes from the scopes file and exit.")
     scope_group.add_argument("-ss", "--show-scope", type=str, help="Display the settings for a specific scope and exit.")
 
@@ -171,11 +126,33 @@ def main():
 
     args = parser.parse_args()
 
+    if args.init:
+        if Path(scopes_file_path).exists():
+            console.print(f"⚠️  '{scopes_file_path}' already exists. Aborting.", style="yellow")
+            return
+
+        default_scopes = {
+            "base": {
+                "path": ".",
+                "include_patterns": ["**/*"],
+                "exclude_patterns": [],
+            }
+        }
+        try:
+            with open(scopes_file_path, "w", encoding="utf-8") as f:
+                f.write("scopes = ")
+                f.write(pprint.pformat(default_scopes, indent=4))
+                f.write("\n")
+            console.print(f"✅ Successfully created a default '{scopes_file_path}' with a 'base' scope.", style="green")
+        except Exception as e:
+            console.print(f"❌ Failed to create '{scopes_file_path}': {e}", style="red")
+        return
+
     try:
         scopes = load_from_py_file(scopes_file_path, "scopes")
     except FileNotFoundError:
         scopes = {}
-        if not any([args.init, args.list_scopes, args.show_scope]):
+        if not any([args.list_scopes, args.show_scope]):
              console.print(f"⚠️  Scope file '{scopes_file_path}' not found. You can create one with the --init flag.", style="yellow")
 
 
@@ -207,10 +184,6 @@ def main():
             )
         else:
             console.print(f"❌ Scope '[bold]{scope_name}[/]' not found in '{scopes_file_path}'.", style="red")
-        return
-
-    if args.init:
-        create_new_scope(scopes, scopes_file_path)
         return
 
     if args.from_clipboard:
