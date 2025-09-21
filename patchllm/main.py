@@ -167,7 +167,8 @@ def main():
     options_group = parser.add_argument_group('General Options')
     options_group.add_argument("-m", "--model", type=str, default="gemini/gemini-2.5-flash", help="Model name to use (e.g., 'gpt-4o', 'claude-3-sonnet').")
     options_group.add_argument("-v", "--voice", type=str, default="False", help="Enable voice interaction for providing task instructions. (True/False)")
-    
+    options_group.add_argument("-g", "--guidelines", nargs='?', const=True, default=None, help="Prepend guidelines to the context. If no value, uses the default system prompt.")
+
     args = parser.parse_args()
 
     try:
@@ -276,6 +277,20 @@ def main():
         return
 
     # --- Main LLM Task Logic ---
+    context = None
+
+    if args.context_in:
+        context = read_from_file(args.context_in)
+    elif args.scope:
+        context = collect_context(args.scope, scopes)
+
+    if args.guidelines is not None:
+        guidelines_content = system_prompt if args.guidelines is True else args.guidelines
+        if context:
+            context = f"{guidelines_content}\n\n{context}"
+        else:
+            context = guidelines_content
+
     if args.task:
         action_flags = [args.patch, args.to_file is not None, args.to_clipboard]
         if sum(action_flags) == 0:
@@ -283,14 +298,11 @@ def main():
         if sum(action_flags) > 1:
             parser.error("Please specify only one action: --patch, --to-file, or --to-clipboard.")
 
-        if args.context_in:
-            context = read_from_file(args.context_in)
-        else:
-            if not args.scope:
-                parser.error("A --scope name is required to build context for a task.")
-            context = collect_context(args.scope, scopes)
-            if context and args.context_out:
-                write_to_file(args.context_out, context)
+        if not args.scope and not args.context_in:
+            parser.error("A --scope or --context-in is required to build context for a task.")
+
+        if context and args.context_out:
+            write_to_file(args.context_out, context)
 
         if not context:
             console.print("Proceeding with task but without any file context.", style="yellow")
@@ -302,7 +314,7 @@ def main():
                 console.print("\n--- Updating files ---", style="bold")
                 paste_response(llm_response)
                 console.print("--- File Update Process Finished ---", style="bold")
-            
+
             elif args.to_file is not None:
                 write_to_file(args.to_file, llm_response)
 
@@ -316,11 +328,12 @@ def main():
                     console.print("Please install it using: pip install pyperclip", style="cyan")
                 except Exception as e:
                     console.print(f"❌ An error occurred while copying to the clipboard: {e}", style="red")
-    
-    elif args.scope and args.context_out:
-        context = collect_context(args.scope, scopes)
+
+    elif args.context_out:
         if context:
             write_to_file(args.context_out, context)
+        else:
+            console.print("No context to export. A scope (-s), context-in (-ci), or guidelines (-g) must be provided.", style="yellow")
 
 if __name__ == "__main__":
     main()
