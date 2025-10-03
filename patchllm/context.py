@@ -60,7 +60,7 @@ def find_files(base_path: Path, include_patterns: list[str], exclude_patterns: l
         for pattern_str in patterns:
             pattern_path = Path(pattern_str)
             # If the pattern is absolute, use it as is. Otherwise, join it with the base_path.
-            search_path = pattern_path if pattern_path.is_absolute() else base_path / pattern_path
+            search_path = pattern_path if pattern_path.is_absolute() else base_path / pattern_str
             
             for match in glob.glob(str(search_path), recursive=True):
                 path_obj = Path(match).resolve()
@@ -297,42 +297,46 @@ def build_context(scope_name: str, scopes: dict, base_path: Path) -> dict | None
     if scope_name.startswith('@'):
         console.print(f"Resolving dynamic scope: [bold cyan]{scope_name}[/bold cyan]")
         
-        # Parameterized scopes
-        search_match = re.match(r'@search:"([^"]+)"', scope_name)
-        error_match = re.match(r'@error:"([^"]+)"', scope_name, re.DOTALL)
-        related_match = re.match(r'@related:(.+)', scope_name)
-        dir_match = re.match(r'@dir:(.+)', scope_name)
-        branch_match = re.match(r'@git:branch(?::(.+))?', scope_name)
+        # --- DEFINITIVE FIX: Use string methods for @error scope ---
+        if scope_name.startswith('@error:"') and scope_name.endswith('"'):
+            # Slice the string to get the content robustly
+            traceback_content = scope_name[len('@error:"'):-1]
+            relevant_files = _resolve_error_traceback_files(traceback_content, base_path)
+            
+        else: # Handle other parameterized scopes with regex
+            search_match = re.match(r'@search:"([^"]+)"', scope_name)
+            related_match = re.match(r'@related:(.+)', scope_name)
+            dir_match = re.match(r'@dir:(.+)', scope_name)
+            branch_match = re.match(r'@git:branch(?::(.+))?', scope_name)
 
-        if search_match:
-            relevant_files = _resolve_search_files(search_match.group(1), base_path)
-        elif error_match:
-            relevant_files = _resolve_error_traceback_files(error_match.group(1), base_path)
-        elif related_match:
-            relevant_files = _resolve_related_files(related_match.group(1).strip(), base_path)
-        elif dir_match:
-            relevant_files = _resolve_directory_files(dir_match.group(1).strip(), base_path)
-        elif branch_match:
-            base_branch = branch_match.group(1) or os.environ.get("GIT_BASE_BRANCH", "main")
-            command = ["git", "diff", "--name-only", f"{base_branch}...HEAD"]
-            relevant_files = _run_git_command(command, base_path)
-
-        # Non-parameterized scopes
-        elif scope_name == "@git":
-            relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
-        elif scope_name == "@git:staged": # Alias for @git
-             relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
-        elif scope_name == "@git:unstaged":
-            relevant_files = _run_git_command(["git", "diff", "--name-only"], base_path)
-        elif scope_name == "@git:lastcommit":
-            relevant_files = _run_git_command(["git", "show", "--pretty=format:", "--name-only", "HEAD"], base_path)
-        elif scope_name == "@git:conflicts":
-             relevant_files = _run_git_command(["git", "diff", "--name-only", "--diff-filter=U"], base_path)
-        elif scope_name == "@recent":
-            relevant_files = _resolve_recent_files(base_path)
-        else:
-            console.print(f"❌ Unknown or invalid dynamic scope '{scope_name}'.", style="red")
-            return None
+            if search_match:
+                relevant_files = _resolve_search_files(search_match.group(1), base_path)
+            elif related_match:
+                relevant_files = _resolve_related_files(related_match.group(1).strip(), base_path)
+            elif dir_match:
+                relevant_files = _resolve_directory_files(dir_match.group(1).strip(), base_path)
+            elif branch_match:
+                base_branch = branch_match.group(1) or os.environ.get("GIT_BASE_BRANCH", "main")
+                command = ["git", "diff", "--name-only", f"{base_branch}...HEAD"]
+                relevant_files = _run_git_command(command, base_path)
+            
+            # Non-parameterized scopes
+            elif scope_name == "@git":
+                relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
+            elif scope_name == "@git:staged": # Alias for @git
+                relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
+            elif scope_name == "@git:unstaged":
+                relevant_files = _run_git_command(["git", "diff", "--name-only"], base_path)
+            elif scope_name == "@git:lastcommit":
+                relevant_files = _run_git_command(["git", "show", "--pretty=format:", "--name-only", "HEAD"], base_path)
+            elif scope_name == "@git:conflicts":
+                relevant_files = _run_git_command(["git", "diff", "--name-only", "--diff-filter=U"], base_path)
+            elif scope_name == "@recent":
+                relevant_files = _resolve_recent_files(base_path)
+            else:
+                # This else block will now correctly handle an unrecognized @error format
+                console.print(f"❌ Unknown or invalid dynamic scope '{scope_name}'.", style="red")
+                return None
     else:
         scope = scopes.get(scope_name)
         if not scope:
