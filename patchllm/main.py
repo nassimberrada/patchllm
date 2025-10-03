@@ -114,6 +114,7 @@ def main():
         help=textwrap.dedent("""\
         Name of the scope to use. Can be a static scope from your scopes file
         or a dynamic scope. Available dynamic scopes:
+        - @structure: High-level view of imports, classes, and functions.
         - @git or @git:staged: Files staged for commit.
         - @git:unstaged: Files modified but not staged.
         - @git:branch[:base]: Files changed on current branch vs. 'main' or :base.
@@ -328,7 +329,7 @@ def main():
                 parser.error("A --scope name is required when using --voice.")
             context = collect_context(args.scope, scopes)
             llm_response = run_llm_query(task, args.model, history, context)
-            if ll_response:
+            if llm_response:
                 paste_response(llm_response)
                 speak("Changes applied.")
         else:

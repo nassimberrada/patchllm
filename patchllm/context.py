@@ -28,6 +28,36 @@ DEFAULT_EXCLUDE_EXTENSIONS = [
     ".meta",
 ]
 
+# --- New: Structure Extraction Settings ---
+STRUCTURE_EXCLUDE_DIRS = ['.git', '__pycache__', 'node_modules', '.venv', 'dist', 'build']
+
+STRUCTURE_TEMPLATE = textwrap.dedent('''
+    Project Structure Outline:
+    --------------------------
+    {{structure_content}}
+''')
+
+LANGUAGE_PATTERNS = {
+    'python': {
+        'extensions': ['.py'],
+        'patterns': [
+            ('imports', re.compile(r"^\s*(?:from\s+[\w\.]+\s+)?import\s+[\w\.\*,\s\(\)]+")),
+            # CORRECTED: Made wildcards non-greedy to handle complex signatures.
+            ('class', re.compile(r"^\s*class\s+.*?:")),
+            ('function', re.compile(r"^\s*(?:async\s+)?def\s+.*?\(.*?\).*?:")),
+        ]
+    },
+    'javascript': {
+        'extensions': ['.js', '.jsx', '.ts', '.tsx'],
+        'patterns': [
+            ('imports', re.compile(r"^\s*import\s+.*from\s+.*|^\s*(?:const|let|var)\s+.*?=\s*require\(.*")),
+            ('class', re.compile(r"^\s*(?:export\s+)?class\s+\w+.*\{")),
+            ('function', re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+\w+\(.*\)|^\s*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async)?\s*\(.*\)\s*=>")),
+        ]
+    }
+}
+
+
 BASE_TEMPLATE = textwrap.dedent('''
     Source Tree:
     ------------
@@ -60,7 +90,7 @@ def find_files(base_path: Path, include_patterns: list[str], exclude_patterns: l
         for pattern_str in patterns:
             pattern_path = Path(pattern_str)
             # If the pattern is absolute, use it as is. Otherwise, join it with the base_path.
-            search_path = pattern_path if pattern_path.is_absolute() else base_path / pattern_str
+            search_path = pattern_path if pattern_path.is_absolute() else base_path / pattern_path
             
             for match in glob.glob(str(search_path), recursive=True):
                 path_obj = Path(match).resolve()
@@ -285,25 +315,82 @@ def _format_context(file_paths: list[Path], urls: list[str], base_path: Path) ->
     
     return {"tree": source_tree_str, "context": final_context}
 
+# --- Structure Context Functions ---
+def _extract_symbols_by_regex(content: str, lang_patterns: list) -> dict:
+    """Extracts symbols from content using a list of regex patterns."""
+    symbols = {"imports": [], "class": [], "function": []}
+    for line in content.splitlines():
+        for symbol_type, pattern in lang_patterns:
+            if pattern.match(line):
+                symbols[symbol_type].append(line.strip())
+                break # A line can only be one type of symbol
+    return symbols
+
+def _build_structure_context(base_path: Path) -> dict | None:
+    """Builds a context by extracting symbols from all project files."""
+    all_files = []
+    for p in base_path.rglob('*'):
+        if any(part in STRUCTURE_EXCLUDE_DIRS for part in p.parts):
+            continue
+        if p.is_file() and p.suffix.lower() not in DEFAULT_EXCLUDE_EXTENSIONS:
+            all_files.append(p)
+    
+    structure_outputs = []
+    for file_path in sorted(all_files):
+        lang = None
+        for lang_name, config in LANGUAGE_PATTERNS.items():
+            if file_path.suffix in config['extensions']:
+                lang = lang_name
+                break
+        
+        if lang:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+                symbols = _extract_symbols_by_regex(content, LANGUAGE_PATTERNS[lang]['patterns'])
+                
+                if any(symbols.values()):
+                    rel_path = file_path.relative_to(base_path)
+                    output = [f"<file_path:{rel_path.as_posix()}>"]
+                    if symbols['imports']:
+                        output.append("[imports]")
+                        output.extend([f"- {s}" for s in symbols['imports']])
+                    if symbols['class'] or symbols['function']:
+                         output.append("[symbols]")
+                         output.extend([f"- {s}" for s in symbols['class']])
+                         output.extend([f"- {s}" for s in symbols['function']])
+                    structure_outputs.append("\n".join(output))
+
+            except Exception as e:
+                console.print(f"⚠️ Could not process {file_path} for structure view: {e}", style="yellow")
+
+    if not structure_outputs:
+        return None
+
+    final_content = "\n\n".join(structure_outputs)
+    final_context = STRUCTURE_TEMPLATE.replace("{{structure_content}}", final_content)
+    
+    return {"tree": "Project structure view", "context": final_context}
+
+
 # --- Main Context Building Function ---
 
 def build_context(scope_name: str, scopes: dict, base_path: Path) -> dict | None:
     """
     Builds the context string from files, handling both static and dynamic scopes.
     """
+    if scope_name == "@structure":
+        return _build_structure_context(base_path)
+
     relevant_files = []
     urls = []
 
     if scope_name.startswith('@'):
         console.print(f"Resolving dynamic scope: [bold cyan]{scope_name}[/bold cyan]")
         
-        # --- DEFINITIVE FIX: Use string methods for @error scope ---
         if scope_name.startswith('@error:"') and scope_name.endswith('"'):
-            # Slice the string to get the content robustly
             traceback_content = scope_name[len('@error:"'):-1]
             relevant_files = _resolve_error_traceback_files(traceback_content, base_path)
-            
-        else: # Handle other parameterized scopes with regex
+        else:
             search_match = re.match(r'@search:"([^"]+)"', scope_name)
             related_match = re.match(r'@related:(.+)', scope_name)
             dir_match = re.match(r'@dir:(.+)', scope_name)
@@ -320,10 +407,9 @@ def build_context(scope_name: str, scopes: dict, base_path: Path) -> dict | None
                 command = ["git", "diff", "--name-only", f"{base_branch}...HEAD"]
                 relevant_files = _run_git_command(command, base_path)
             
-            # Non-parameterized scopes
             elif scope_name == "@git":
                 relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
-            elif scope_name == "@git:staged": # Alias for @git
+            elif scope_name == "@git:staged":
                 relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
             elif scope_name == "@git:unstaged":
                 relevant_files = _run_git_command(["git", "diff", "--name-only"], base_path)
@@ -334,7 +420,6 @@ def build_context(scope_name: str, scopes: dict, base_path: Path) -> dict | None
             elif scope_name == "@recent":
                 relevant_files = _resolve_recent_files(base_path)
             else:
-                # This else block will now correctly handle an unrecognized @error format
                 console.print(f"❌ Unknown or invalid dynamic scope '{scope_name}'.", style="red")
                 return None
     else:

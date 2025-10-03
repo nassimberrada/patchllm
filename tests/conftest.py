@@ -1,5 +1,6 @@
 import pytest
 import subprocess
+import textwrap
 from pathlib import Path
 
 @pytest.fixture
@@ -63,3 +64,56 @@ scopes = {
     scopes_file = tmp_path / "scopes.py"
     scopes_file.write_text(scopes_content)
     return scopes_file
+
+@pytest.fixture
+def mixed_project(tmp_path):
+    """Creates a project with both Python and JS files for structure testing."""
+    proj_dir = tmp_path / "mixed_project"
+    
+    py_api_dir = proj_dir / "api"
+    py_api_dir.mkdir(parents=True)
+    (py_api_dir / "main.py").write_text(textwrap.dedent("""
+        import os
+        from .models import User
+
+        class APIServer:
+            def start(self):
+                pass
+
+        async def get_user(id: int) -> User:
+            # A comment that looks like a function def my_func()
+            return User()
+        """))
+    (py_api_dir / "models.py").write_text(textwrap.dedent("""
+        from db import Base
+
+        class User(Base):
+            pass
+        """))
+
+    js_src_dir = proj_dir / "frontend" / "src"
+    js_src_dir.mkdir(parents=True)
+    (js_src_dir / "index.js").write_text(textwrap.dedent("""
+        import React from "react";
+        const { Component } = require("react");
+
+        export class App extends Component {
+            render() {
+                return <h1>Hello</h1>;
+            }
+        }
+
+        export const arrowFunc = () => {
+            console.log('test');
+        }
+        """))
+    (js_src_dir / "utils.ts").write_text(textwrap.dedent("""
+        export async function fetchData(url: string): Promise<any> {
+            // some implementation
+        }
+        """))
+    
+    # Add a file that shouldn't be parsed
+    (proj_dir / "README.md").write_text("# Mixed Project")
+
+    return proj_dir
