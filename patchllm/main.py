@@ -3,6 +3,7 @@ import argparse
 import litellm
 import pprint
 import os
+import ast
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
@@ -84,6 +85,17 @@ def read_from_file(file_path):
     except Exception as e:
         raise RuntimeError(f"Failed to read from file {file_path}: {e}") from e
 
+def write_scopes_to_file(file_path, scopes_dict):
+    """Writes the scopes dictionary back to a Python file."""
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write("scopes = ")
+            f.write(pprint.pformat(scopes_dict, indent=4))
+            f.write("\n")
+        console.print(f"✅ Successfully updated '{file_path}'.", style="green")
+    except Exception as e:
+        console.print(f"❌ Failed to write to '{file_path}': {e}", style="red")
+
 def main():
     """
     Main entry point for the patchllm command-line tool.
@@ -108,6 +120,10 @@ def main():
     scope_group.add_argument("-i", "--init", action="store_true", help="Create a default 'scopes.py' file with a 'base' scope.")
     scope_group.add_argument("-sl", "--list-scopes", action="store_true", help="List all available scopes from the scopes file and exit.")
     scope_group.add_argument("-ss", "--show-scope", type=str, help="Display the settings for a specific scope and exit.")
+    scope_group.add_argument("-sa", "--add-scope", type=str, help="Add a new scope with default settings.")
+    scope_group.add_argument("-sr", "--remove-scope", type=str, help="Remove a scope from the scopes file.")
+    scope_group.add_argument("-su", "--update-scope", nargs='+', help="Update a scope. Usage: -su <scope_name> key=\"['value']\" key2=value2")
+
 
     # --- Group: I/O Utils---
     code_io = parser.add_argument_group('Code I/O')
@@ -120,7 +136,7 @@ def main():
     
     # --- Group: General Options ---
     options_group = parser.add_argument_group('General Options')
-    options_group.add_argument("-m", "--model", type=str, default="gemini/gemini-2.5-flash", help="Model name to use (e.g., 'gpt-4o', 'claude-3-sonnet').")
+    options_group.add_argument("-m", "--model", type=str, default="gemini/gemini-1.5-flash", help="Model name to use (e.g., 'gpt-4o', 'claude-3-sonnet').")
     options_group.add_argument("-v", "--voice", type=str, default="False", help="Enable voice interaction for providing task instructions. (True/False)")
     options_group.add_argument("-g", "--guidelines", nargs='?', const=True, default=None, help="Prepend guidelines to the context. If no value, uses the default system prompt.")
 
@@ -138,22 +154,79 @@ def main():
                 "exclude_patterns": [],
             }
         }
-        try:
-            with open(scopes_file_path, "w", encoding="utf-8") as f:
-                f.write("scopes = ")
-                f.write(pprint.pformat(default_scopes, indent=4))
-                f.write("\n")
-            console.print(f"✅ Successfully created a default '{scopes_file_path}' with a 'base' scope.", style="green")
-        except Exception as e:
-            console.print(f"❌ Failed to create '{scopes_file_path}': {e}", style="red")
+        write_scopes_to_file(scopes_file_path, default_scopes)
+        console.print(f"✅ Successfully created a default '{scopes_file_path}' with a 'base' scope.", style="green")
         return
 
     try:
         scopes = load_from_py_file(scopes_file_path, "scopes")
     except FileNotFoundError:
         scopes = {}
-        if not any([args.list_scopes, args.show_scope]):
+        if not any([args.list_scopes, args.show_scope, args.add_scope]):
              console.print(f"⚠️  Scope file '{scopes_file_path}' not found. You can create one with the --init flag.", style="yellow")
+    except Exception as e:
+        console.print(f"❌ Error loading scopes file: {e}", style="red")
+        return
+
+
+    if args.add_scope:
+        scope_name = args.add_scope
+        if scope_name in scopes:
+            console.print(f"❌ Scope '[bold]{scope_name}[/]' already exists.", style="red")
+            return
+        
+        scopes[scope_name] = {
+            "path": ".",
+            "include_patterns": ["**/*"],
+            "exclude_patterns": [],
+        }
+        write_scopes_to_file(scopes_file_path, scopes)
+        console.print(f"✅ Added new scope '[bold]{scope_name}[/]' with default settings.")
+        return
+
+    if args.remove_scope:
+        scope_name = args.remove_scope
+        if scope_name not in scopes:
+            console.print(f"❌ Scope '[bold]{scope_name}[/]' not found.", style="red")
+            return
+        
+        del scopes[scope_name]
+        write_scopes_to_file(scopes_file_path, scopes)
+        console.print(f"✅ Removed scope '[bold]{scope_name}[/]'.")
+        return
+
+    if args.update_scope:
+        if len(args.update_scope) < 2:
+            parser.error("--update-scope requires a scope name and at least one 'key=value' pair.")
+        
+        scope_name = args.update_scope[0]
+        updates = args.update_scope[1:]
+
+        if scope_name not in scopes:
+            console.print(f"❌ Scope '[bold]{scope_name}[/]' not found.", style="red")
+            return
+
+        try:
+            for update in updates:
+                if '=' not in update:
+                    raise ValueError(f"Invalid update format. Expected 'key=value', but got '{update}'")
+                key, value_str = update.split('=', 1)
+                key = key.strip()
+                
+                if key not in scopes[scope_name]:
+                     console.print(f"⚠️  Key '[bold]{key}[/]' not found in scope. It will be added.", style="yellow")
+
+                value = ast.literal_eval(value_str) # Safely evaluate string to Python literal.
+                scopes[scope_name][key] = value
+                console.print(f"  -> Updated '{key}' in scope '[bold]{scope_name}[/]'.")
+
+            write_scopes_to_file(scopes_file_path, scopes)
+        except (ValueError, SyntaxError) as e:
+            console.print(f"❌ Error parsing update values: {e}", style="red")
+            console.print("  -> Make sure values are valid Python literals (e.g., strings in quotes, lists in brackets).", style="yellow")
+        except Exception as e:
+            console.print(f"❌ An unexpected error occurred during scope update: {e}", style="red")
+        return
 
 
     if args.list_scopes:
