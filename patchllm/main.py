@@ -18,22 +18,20 @@ console = Console()
 # --- Core Functions ---
 
 def collect_context(scope_name, scopes):
-    """Builds the code context from a provided scope dictionary."""
+    """Builds the code context from a provided scope name."""
     console.print("\n--- Building Code Context... ---", style="bold")
-    if not scopes:
-        raise FileNotFoundError("Could not find a 'scopes.py' file.")
-    selected_scope = scopes.get(scope_name)
-    if selected_scope is None:
-        raise KeyError(f"Context scope '{scope_name}' not found in provided scopes file.")
+    base_path = Path(".").resolve()
+
+    # build_context now handles all logic (dynamic vs static)
+    context_object = build_context(scope_name, scopes, base_path)
     
-    context_object = build_context(selected_scope)
     if context_object:
         tree, context = context_object.values()
         console.print("--- Context Building Finished. The following files were extracted ---", style="bold")
         console.print(tree)
         return context
     else:
-        console.print("--- Context Building Failed (No files found) ---", style="yellow")
+        console.print("--- Context Building Failed ---", style="yellow")
         return None
 
 def run_llm_query(task_instructions, model_name, history, context=None):
@@ -111,7 +109,22 @@ def main():
 
     # --- Group: Core Patching Flow ---
     patch_group = parser.add_argument_group('Core Patching Flow')
-    patch_group.add_argument("-s", "--scope", type=str, default=None, help="Name of the scope to use from the scopes file.")
+    patch_group.add_argument(
+        "-s", "--scope", type=str, default=None,
+        help=textwrap.dedent("""\
+        Name of the scope to use. Can be a static scope from your scopes file
+        or a dynamic scope. Available dynamic scopes:
+        - @git or @git:staged: Files staged for commit.
+        - @git:unstaged: Files modified but not staged.
+        - @git:branch[:base]: Files changed on current branch vs. 'main' or :base.
+        - @git:lastcommit: Files from the last commit.
+        - @git:conflicts: Files with merge conflicts.
+        - @recent: 5 most recently modified files.
+        - @dir:<path>: All files in a directory.
+        - @related:<file>: A file and its likely related files (e.g., tests).
+        - @search:"<term>": All files containing a search term.
+        - @error:"<traceback>": Parses file paths from a traceback.
+        """))
     patch_group.add_argument("-t", "--task", type=str, default=None, help="The task instructions to guide the assistant.")
     patch_group.add_argument("-p", "--patch", action="store_true", help="Query the LLM and directly apply the file updates from the response. Requires --task.")
 
@@ -315,7 +328,7 @@ def main():
                 parser.error("A --scope name is required when using --voice.")
             context = collect_context(args.scope, scopes)
             llm_response = run_llm_query(task, args.model, history, context)
-            if llm_response:
+            if ll_response:
                 paste_response(llm_response)
                 speak("Changes applied.")
         else:

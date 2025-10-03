@@ -4,6 +4,8 @@ import subprocess
 import shutil
 from pathlib import Path
 from rich.console import Console
+import re
+import os
 
 console = Console()
 
@@ -173,51 +175,100 @@ def fetch_and_process_urls(urls: list[str]) -> str:
     content_str = "\n\n".join(all_url_contents)
     return URL_CONTENT_TEMPLATE.replace("{{content}}", content_str)
 
-# --- Main Context Building Function ---
+# --- Dynamic Scope Resolution ---
 
-def build_context(scope: dict) -> dict | None:
-    """
-    Builds the context string from files specified in the scope.
+def _run_git_command(command: list[str], base_path: Path) -> list[Path]:
+    """Helper to run a git command and return a list of file paths."""
+    try:
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=True, cwd=base_path
+        )
+        files = result.stdout.strip().split('\n')
+        return [base_path / f for f in files if f]
+    except FileNotFoundError:
+        console.print("❌ Git not found. Cannot resolve git-based scope.", style="red")
+    except subprocess.CalledProcessError:
+        # This is often not an error, e.g., no staged files, no conflicts.
+        pass
+    except Exception as e:
+        console.print(f"❌ An error occurred with Git: {e}", style="red")
+    return []
 
-    Args:
-        scope (dict): The scope for file searching.
+def _resolve_recent_files(base_path: Path, count: int = 5) -> list[Path]:
+    """Returns a list of the most recently modified files."""
+    all_files = filter(Path.is_file, base_path.rglob('*'))
+    try:
+        sorted_files = sorted(all_files, key=lambda p: p.stat().st_mtime, reverse=True)
+        return sorted_files[:count]
+    except Exception as e:
+        console.print(f"❌ Error finding recent files: {e}", style="red")
+        return []
 
-    Returns:
-        dict: A dictionary with the source tree and formatted context, or None.
-    """
-    base_path = Path(scope.get("path", ".")).resolve()
+def _resolve_search_files(search_term: str, base_path: Path) -> list[Path]:
+    """Finds all files containing the given search term."""
+    all_files = find_files(base_path, ["**/*"])
+    return filter_files_by_keyword(all_files, [search_term])
+
+def _resolve_error_traceback_files(traceback: str, base_path: Path) -> list[Path]:
+    """Parses file paths from a traceback and returns them."""
+    # This regex looks for patterns like: File "/path/to/file.py", line 123
+    pattern = r'File "([^"]+)"'
+    matches = re.findall(pattern, traceback)
     
-    include_patterns = scope.get("include_patterns", [])
-    exclude_patterns = scope.get("exclude_patterns", [])
-    exclude_extensions = scope.get("exclude_extensions", DEFAULT_EXCLUDE_EXTENSIONS)
-    search_words = scope.get("search_words", [])
-    urls = scope.get("urls", [])
+    files = set()
+    for file_str in matches:
+        path = Path(file_str)
+        # If the path is absolute, use it. Otherwise, resolve it relative to the base path.
+        if path.is_absolute():
+            files.add(path)
+        else:
+            files.add((base_path / path).resolve())
+            
+    return sorted([f for f in files if f.exists()])
 
-    # Step 1: Find files
-    relevant_files = find_files(base_path, include_patterns, exclude_patterns)
+def _resolve_directory_files(dir_path_str: str, base_path: Path) -> list[Path]:
+    """Gets all files in a specific directory (non-recursively)."""
+    dir_path = (base_path / dir_path_str).resolve()
+    if not dir_path.is_dir():
+        console.print(f"❌ Directory not found for @dir scope: {dir_path}", style="red")
+        return []
+    return sorted([f for f in dir_path.iterdir() if f.is_file()])
 
-    # Step 2: Filter by extension
-    count_before_ext = len(relevant_files)
-    norm_ext = {ext.lower() for ext in exclude_extensions}
-    relevant_files = [p for p in relevant_files if p.suffix.lower() not in norm_ext]
-    if count_before_ext > len(relevant_files):
-        console.print(f"Filtered {count_before_ext - len(relevant_files)} files by extension.", style="cyan")
+def _resolve_related_files(file_path_str: str, base_path: Path) -> list[Path]:
+    """Finds files related to the given file by naming convention."""
+    start_path = (base_path / file_path_str).resolve()
+    if not start_path.exists():
+        console.print(f"❌ File not found for @related scope: {start_path}", style="red")
+        return []
 
-    # Step 3: Filter by keyword
-    if search_words:
-        count_before_kw = len(relevant_files)
-        relevant_files = filter_files_by_keyword(relevant_files, search_words)
-        console.print(f"Filtered {count_before_kw - len(relevant_files)} files by keyword search.", style="cyan")
+    related_files = {start_path}
+    stem = start_path.stem
+    
+    # Common test patterns
+    test_variations = [
+        start_path.parent / f"test_{stem}{start_path.suffix}",
+        base_path / "tests" / f"test_{stem}{start_path.suffix}",
+        start_path.parent.parent / "tests" / start_path.parent.name / f"test_{stem}{start_path.suffix}"
+    ]
+    # Sibling files (e.g., .js, .css, .html)
+    sibling_exts = ['.css', '.js', '.html', '.scss', '.py', '.md']
+    for ext in sibling_exts:
+        if ext != start_path.suffix:
+            related_files.add(start_path.with_suffix(ext))
+    
+    for path in test_variations:
+        if path.exists():
+            related_files.add(path)
+            
+    return sorted(list(related_files))
 
-    if not relevant_files and not urls:
-        console.print("\n⚠️  No files or URLs matched the specified criteria.", style="yellow")
-        return None
 
-    # Generate source tree and file content blocks
-    source_tree_str = generate_source_tree(base_path, relevant_files)
+def _format_context(file_paths: list[Path], urls: list[str], base_path: Path) -> dict | None:
+    """Helper to format the final context string from a list of files and URLs."""
+    source_tree_str = generate_source_tree(base_path, file_paths)
     
     file_contents = []
-    for file_path in relevant_files:
+    for file_path in file_paths:
         try:
             display_path = file_path.as_posix()
             content = file_path.read_text(encoding='utf-8')
@@ -226,13 +277,91 @@ def build_context(scope: dict) -> dict | None:
             console.print(f"⚠️  Could not read file {file_path}: {e}", style="yellow")
 
     files_content_str = "\n\n".join(file_contents)
-
-    # Fetch and process URL contents
     url_contents_str = fetch_and_process_urls(urls)
 
-    # Assemble the final context using the base template
     final_context = BASE_TEMPLATE.replace("{{source_tree}}", source_tree_str)
     final_context = final_context.replace("{{url_contents}}", url_contents_str)
     final_context = final_context.replace("{{files_content}}", files_content_str)
     
     return {"tree": source_tree_str, "context": final_context}
+
+# --- Main Context Building Function ---
+
+def build_context(scope_name: str, scopes: dict, base_path: Path) -> dict | None:
+    """
+    Builds the context string from files, handling both static and dynamic scopes.
+    """
+    relevant_files = []
+    urls = []
+
+    if scope_name.startswith('@'):
+        console.print(f"Resolving dynamic scope: [bold cyan]{scope_name}[/bold cyan]")
+        
+        # Parameterized scopes
+        search_match = re.match(r'@search:"([^"]+)"', scope_name)
+        error_match = re.match(r'@error:"([^"]+)"', scope_name, re.DOTALL)
+        related_match = re.match(r'@related:(.+)', scope_name)
+        dir_match = re.match(r'@dir:(.+)', scope_name)
+        branch_match = re.match(r'@git:branch(?::(.+))?', scope_name)
+
+        if search_match:
+            relevant_files = _resolve_search_files(search_match.group(1), base_path)
+        elif error_match:
+            relevant_files = _resolve_error_traceback_files(error_match.group(1), base_path)
+        elif related_match:
+            relevant_files = _resolve_related_files(related_match.group(1).strip(), base_path)
+        elif dir_match:
+            relevant_files = _resolve_directory_files(dir_match.group(1).strip(), base_path)
+        elif branch_match:
+            base_branch = branch_match.group(1) or os.environ.get("GIT_BASE_BRANCH", "main")
+            command = ["git", "diff", "--name-only", f"{base_branch}...HEAD"]
+            relevant_files = _run_git_command(command, base_path)
+
+        # Non-parameterized scopes
+        elif scope_name == "@git":
+            relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
+        elif scope_name == "@git:staged": # Alias for @git
+             relevant_files = _run_git_command(["git", "diff", "--name-only", "--cached"], base_path)
+        elif scope_name == "@git:unstaged":
+            relevant_files = _run_git_command(["git", "diff", "--name-only"], base_path)
+        elif scope_name == "@git:lastcommit":
+            relevant_files = _run_git_command(["git", "show", "--pretty=format:", "--name-only", "HEAD"], base_path)
+        elif scope_name == "@git:conflicts":
+             relevant_files = _run_git_command(["git", "diff", "--name-only", "--diff-filter=U"], base_path)
+        elif scope_name == "@recent":
+            relevant_files = _resolve_recent_files(base_path)
+        else:
+            console.print(f"❌ Unknown or invalid dynamic scope '{scope_name}'.", style="red")
+            return None
+    else:
+        scope = scopes.get(scope_name)
+        if not scope:
+            console.print(f"❌ Static scope '{scope_name}' not found in scopes file.", style="red")
+            return None
+        
+        base_path = Path(scope.get("path", ".")).resolve()
+        include_patterns = scope.get("include_patterns", [])
+        exclude_patterns = scope.get("exclude_patterns", [])
+        search_words = scope.get("search_words", [])
+        urls = scope.get("urls", [])
+        relevant_files = find_files(base_path, include_patterns, exclude_patterns)
+        if search_words:
+            relevant_files = filter_files_by_keyword(relevant_files, search_words)
+
+    # --- Common Filtering and Formatting ---
+    if not relevant_files and not urls:
+        console.print("\n⚠️  No files or URLs matched the specified criteria.", style="yellow")
+        return None
+
+    exclude_extensions = scopes.get(scope_name, {}).get("exclude_extensions", DEFAULT_EXCLUDE_EXTENSIONS)
+    count_before_ext = len(relevant_files)
+    norm_ext = {ext.lower() for ext in exclude_extensions}
+    relevant_files = [p for p in relevant_files if p.suffix.lower() not in norm_ext]
+    if count_before_ext > len(relevant_files):
+        console.print(f"Filtered {count_before_ext - len(relevant_files)} files by extension.", style="cyan")
+
+    if not relevant_files and not urls:
+        console.print("\n⚠️  No files left after filtering.", style="yellow")
+        return None
+
+    return _format_context(relevant_files, urls, base_path)
