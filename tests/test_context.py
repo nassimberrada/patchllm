@@ -2,6 +2,7 @@ import os
 import time
 import subprocess
 import textwrap
+# --- MODIFICATION: Changed to absolute imports ---
 from patchllm.scopes.builder import build_context
 from patchllm.utils import load_from_py_file
 

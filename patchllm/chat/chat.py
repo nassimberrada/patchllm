@@ -5,9 +5,11 @@ from InquirerPy import prompt
 from InquirerPy.validator import EmptyInputValidator
 from InquirerPy.exceptions import InvalidArgument
 
-from ..cli.handlers import get_system_prompt, _collect_context
+# MODIFICATION: Import 'run_llm_query' from llm module directly
 from ..llm import run_llm_query
 from ..parser import paste_response, summarize_changes, display_diff
+# MODIFICATION: Import helpers from handlers is no longer needed here
+from ..cli.handlers import get_system_prompt, _collect_context
 
 console = Console()
 
@@ -33,7 +35,8 @@ class ChatSession:
                 "validate": EmptyInputValidator(),
                 "border": True,
             }
-            return prompt(question, vi_mode=True)[0]
+            # --- CORRECTION: InquirerPy returns the value directly, not in a list ---
+            return prompt(question, vi_mode=True)
         except (InvalidArgument, IndexError, KeyError):
             return None # User cancelled
 
@@ -47,17 +50,43 @@ class ChatSession:
                 "validate": EmptyInputValidator(),
                 "border": True,
             }
-            return prompt(question, vi_mode=True)[0]
+            # --- CORRECTION: InquirerPy returns the value directly ---
+            return prompt(question, vi_mode=True)
+        except (InvalidArgument, IndexError, KeyError):
+            return None # User cancelled
+
+    def _prompt_for_task_or_recipe(self):
+        """Allows user to select a recipe or enter a manual task."""
+        if not self.recipes:
+            return self._prompt_for_task()
+
+        try:
+            choices = [{"name": f"[Recipe] {name}", "value": ("recipe", name)} for name in self.recipes.keys()]
+            choices.append({"name": "[Manual] Enter a new task instruction", "value": ("manual", None)})
+            
+            question = {
+                "type": "list",
+                "message": "How would you like to define the task?",
+                "choices": choices,
+                "border": True,
+            }
+            task_type, value = prompt(question, vi_mode=True)
+
+            if task_type == "recipe":
+                return self.recipes.get(value)
+            return self._prompt_for_task()
+            
         except (InvalidArgument, IndexError, KeyError):
             return None # User cancelled
 
     def _confirm_proceed(self):
         try:
+            # --- CORRECTION: confirm prompt returns a boolean directly ---
             return prompt({
                 "type": "confirm",
                 "message": "Proceed to query the LLM?",
                 "default": True
-            })[0]
+            })
         except (InvalidArgument, IndexError, KeyError):
             return False # User cancelled
 
@@ -85,23 +114,33 @@ class ChatSession:
                 ],
                 "border": True,
             }
-            return prompt(question, vi_mode=True)[0]
+            # --- CORRECTION: list prompt returns the value directly ---
+            return prompt(question, vi_mode=True)
         except (InvalidArgument, IndexError, KeyError):
             return "cancel" # User cancelled
 
-    def start(self):
-        console.print("🤖 Welcome to PatchLLM Chat Mode!", style="bold blue")
-        
+    def _select_and_build_context(self):
+        """Handles the initial scope selection and context building for the original chat flow."""
         scope_name = self._prompt_for_scope()
-        if not scope_name: return
+        if not scope_name: 
+            return None
         self.args.scope = scope_name
+        context_object = _collect_context(self.args, self.scopes)
+        return context_object.get("context") if context_object else None
 
-        self.context = _collect_context(self.args, self.scopes)
-        if self.context is None: return
+    def run_llm_interaction_loop(self, task_prompt_method=None):
+        """The core loop for getting a task, querying the LLM, and handling the response."""
+        if self.context is None:
+            console.print("Cannot start LLM interaction without a context.", style="red")
+            return
+
+        task_prompt_method = task_prompt_method or self._prompt_for_task
 
         while True:
-            task = self._prompt_for_task()
-            if not task: break
+            task = task_prompt_method()
+            if not task:
+                console.print("Cancelled.", style="yellow")
+                break
 
             if not self._confirm_proceed():
                 console.print("Cancelled.", style="yellow")
@@ -128,7 +167,7 @@ class ChatSession:
                     break
                 elif nested_action == "retry":
                     continue
-                else: # This now correctly handles the "cancel" case
+                else:
                     console.print("Cancelled.", style="yellow")
                     break
             elif action == "save":
@@ -140,3 +179,13 @@ class ChatSession:
             else: # cancel
                 console.print("Cancelled.", style="yellow")
                 break
+
+    def start(self):
+        """The original entry point for the `--chat` flag."""
+        console.print("🤖 Welcome to PatchLLM Chat Mode!", style="bold blue")
+        
+        self.context = self._select_and_build_context()
+        if self.context is None:
+            return
+
+        self.run_llm_interaction_loop()

@@ -69,7 +69,7 @@ def generate_source_tree(base_path: Path, file_paths: list[Path]) -> str:
     return f"{base_path.name}\n" + "\n".join(_format_tree(tree))
 
 def _format_context(file_paths: list[Path], urls: list[str], base_path: Path) -> dict | None:
-    """Helper to format the final context string."""
+    """Helper to format the final context string and preserve the file list."""
     source_tree_str = generate_source_tree(base_path, file_paths)
     file_contents = []
     for file_path in file_paths:
@@ -86,7 +86,8 @@ def _format_context(file_paths: list[Path], urls: list[str], base_path: Path) ->
     final_context = final_context.replace("{{url_contents}}", url_contents_str)
     final_context = final_context.replace("{{files_content}}", files_content_str)
     
-    return {"tree": source_tree_str, "context": final_context}
+    # --- CORRECTION: Return the original, pristine list of Path objects ---
+    return {"tree": source_tree_str, "context": final_context, "files": file_paths}
 
 def fetch_and_process_urls(urls: list[str]) -> str:
     """Downloads and converts a list of URLs to text."""

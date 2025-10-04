@@ -1,12 +1,14 @@
 import argparse
 import textwrap
 import os
+import sys
 from pathlib import Path
 from rich.console import Console
 
 from .handlers import (
     handle_init, handle_scope_management, handle_file_io, 
-    handle_main_task_flow, handle_voice_flow, handle_chat_flow
+    handle_main_task_flow, handle_voice_flow, handle_chat_flow,
+    handle_interactive_wizard_flow
 )
 from ..utils import load_from_py_file
 
@@ -73,15 +75,12 @@ def main():
 
     args = parser.parse_args()
 
-    if args.init:
-        handle_init(scopes_file_path)
-        return
-
+    # Load scopes and recipes early for all flows.
     try:
         scopes = load_from_py_file(scopes_file_path, "scopes")
     except FileNotFoundError:
         scopes = {}
-        if not any([args.list_scopes, args.show_scope, args.add_scope, args.init, args.chat]):
+        if not any([args.list_scopes, args.show_scope, args.add_scope, args.init, args.chat, len(sys.argv) == 1]):
              console.print(f"⚠️  Scope file '{scopes_file_path}' not found. You can create one with --init.", style="yellow")
     except Exception as e:
         console.print(f"❌ Error loading scopes file: {e}", style="red")
@@ -95,6 +94,18 @@ def main():
             console.print(f"⚠️  Recipes file '{recipes_file_path}' not found, but a recipe was requested.", style="yellow")
     except Exception as e:
         console.print(f"❌ Error loading recipes file: {e}", style="red")
+        return
+
+    # --- START OF MODIFICATION ---
+    # If no arguments are provided, start the new guided interactive flow.
+    # We check for more than 1 because sys.argv[0] is the script name itself.
+    if len(sys.argv) == 1:
+        handle_interactive_wizard_flow(args, scopes, recipes)
+        return
+    # --- END OF MODIFICATION ---
+
+    if args.init:
+        handle_init(scopes_file_path)
         return
 
     if args.chat:

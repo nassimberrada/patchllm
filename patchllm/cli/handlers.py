@@ -1,14 +1,18 @@
 import pprint
 import ast
 import textwrap
+import re
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
 from ..utils import write_scopes_to_file
 from ..parser import paste_response
-from ..scopes.builder import build_context, build_context_from_files
+from ..scopes.builder import build_context, build_context_from_files, helpers
 from ..llm import run_llm_query
+
+from InquirerPy import prompt
+from InquirerPy.exceptions import InvalidArgument
 
 console = Console()
 
@@ -106,10 +110,13 @@ def _collect_context(args, scopes):
         context_object = build_context(args.scope, scopes, base_path)
 
     if context_object:
-        tree, context = context_object.values()
+        tree = context_object.get("tree", "")
         console.print("\n--- Context Summary ---", style="bold")
         console.print(tree)
-        return context
+        
+        # --- CORRECTION: No longer need to re-parse the context string. ---
+        # The 'files' key is now correctly populated by the builder functions.
+        return context_object
     
     if any([args.interactive, args.scope]):
         console.print("--- Context building failed or returned no files. ---", style="yellow")
@@ -154,10 +161,11 @@ def handle_main_task_flow(args, scopes, recipes, parser):
     if args.context_in:
         context = Path(args.context_in).read_text()
     else:
-        context = _collect_context(args, scopes)
+        context_object = _collect_context(args, scopes)
+        context = context_object.get("context") if context_object else None
         if context is None and not args.guidelines:
              if any([args.scope, args.interactive]):
-                 return # Exit if context building failed
+                 return
              if task:
                  parser.error("A scope (-s), interactive (-in), or context-in (-ci) is required for a task or recipe.")
 
@@ -211,7 +219,8 @@ def handle_voice_flow(args, scopes, parser):
     speak(f"You said: {task}. Should I proceed?")
     confirm = listen()
     if confirm and "yes" in confirm.lower():
-        context = _collect_context(args, scopes)
+        context_object = _collect_context(args, scopes)
+        context = context_object.get("context") if context_object else None
         if context is None:
             speak("Context building failed. Exiting.")
             return
@@ -239,3 +248,149 @@ def handle_chat_flow(args, scopes, recipes):
         console.print("\n👋 Chat session ended by user.", style="bold yellow")
     except Exception as e:
         console.print(f"❌ An unexpected error occurred in chat mode: {e}", style="red")
+
+# --- START OF WIZARD FUNCTIONS ---
+
+def _wizard_select_context_source(args, scopes):
+    """Step 1: Asks the user how they want to build the context."""
+    try:
+        question = {
+            "type": "list", "name": "source",
+            "message": "How would you like to build the context?",
+            "choices": [
+                {"name": "Select from a list of saved scopes", "value": "saved"},
+                {"name": "Enter a dynamic scope (e.g., @git:staged)", "value": "dynamic"},
+                {"name": "Interactively select files/folders", "value": "interactive"},
+                {"name": "Import from a context file", "value": "file"},
+            ], "border": True,
+        }
+        result = prompt([question])
+        source = result.get("source") if result else None
+        if not source: return None
+
+        if source == "saved":
+            if not scopes:
+                console.print("⚠️ No scopes found in 'scopes.py'.", style="yellow")
+                return None
+            scope_question = {"type": "fuzzy", "name": "scope", "message": "Select a scope:", "choices": sorted(scopes.keys())}
+            scope_result = prompt([scope_question])
+            scope_name = scope_result.get("scope") if scope_result else None
+            if not scope_name: return None
+            args.scope = scope_name
+            return _collect_context(args, scopes)
+            
+        elif source == "dynamic":
+            scope_question = {"type": "input", "name": "scope", "message": "Enter dynamic scope:"}
+            scope_result = prompt([scope_question])
+            scope_name = scope_result.get("scope") if scope_result else None
+            if not scope_name: return None
+            args.scope = scope_name
+            return _collect_context(args, scopes)
+
+        elif source == "interactive":
+            args.interactive = True
+            return _collect_context(args, scopes)
+            
+        elif source == "file":
+            file_question = {"type": "input", "name": "file", "message": "Enter path to context file:"}
+            file_result = prompt([file_question])
+            file_path = file_result.get("file") if file_result else None
+            if not file_path or not Path(file_path).exists():
+                console.print("❌ File not found.", style="red")
+                return None
+            context = Path(file_path).read_text()
+            return {"context": context, "files": []}
+
+    except (InvalidArgument, IndexError, KeyError, TypeError):
+        return None
+
+def _wizard_refine_context(initial_files, base_path):
+    """Step 2: Allows the user to add or remove files from the context."""
+    current_files = set(initial_files)
+    
+    while True:
+        if not current_files:
+            console.print("Context is empty. Add some files.", style="yellow")
+            action = "Add files"
+        else:
+            console.print(Panel(
+                "\n".join(sorted(f"- {p.relative_to(base_path)}" for p in current_files)),
+                title=f"[bold cyan]Current Context ({len(current_files)} files)[/bold cyan]"
+            ))
+            question = {"type": "list", "name": "action", "message": "Refine the context or proceed?", "choices": ["Proceed", "Add files", "Remove files", "Cancel"], "border": True}
+            result = prompt([question])
+            action = result.get("action") if result else None
+
+        if action == "Proceed":
+            return sorted(list(current_files))
+        if action is None or action == "Cancel":
+            return None
+        elif action == "Add files":
+            from ..interactive.selector import select_files_interactively
+            new_files = select_files_interactively(base_path)
+            current_files.update(new_files)
+        elif action == "Remove files":
+            remove_question = {
+                "type": "checkbox", "name": "removed", "message": "Select files to remove:",
+                "choices": sorted([f.relative_to(base_path).as_posix() for f in current_files]),
+                "transformer": lambda res: f"{len(res)} file(s) selected to remove",
+            }
+            result = prompt([remove_question])
+            files_to_remove = result.get("removed") if result else []
+            if files_to_remove is not None:
+                current_files = {f for f in current_files if f.relative_to(base_path).as_posix() not in files_to_remove}
+
+def handle_interactive_wizard_flow(args, scopes, recipes):
+    """Orchestrates a guided, interactive session when `patchllm` is run with no flags."""
+    console.print("🤖 Welcome to the PatchLLM Interactive Wizard!", style="bold blue")
+    base_path = Path(".").resolve()
+
+    try:
+        from ..chat.chat import ChatSession
+        context_object = _wizard_select_context_source(args, scopes)
+        if not context_object or not context_object.get("context"):
+            console.print("Context building cancelled or failed. Exiting.", style="yellow")
+            return
+
+        initial_files = context_object.get("files", [])
+        final_files = initial_files
+        if initial_files:
+             final_files = _wizard_refine_context(initial_files, base_path)
+             if final_files is None:
+                 console.print("Cancelled during context refinement. Exiting.", style="yellow")
+                 return
+        
+        final_context_str = helpers._format_context(final_files, [], base_path)['context']
+
+        action_question = {"type": "list", "name": "action", "message": "What would you like to do with the final context?", "choices": ["Update code with LLM", "Save context to file", "Copy context to clipboard", "Cancel"], "border": True}
+        result = prompt([action_question])
+        action = result.get("action") if result else None
+
+        if action == "Save context to file":
+            path_question = {"type": "input", "name": "path", "message": "Enter filename:", "default": "context.md"}
+            path_result = prompt([path_question])
+            out_path = path_result.get("path") if path_result else None
+            if not out_path: return
+            Path(out_path).write_text(final_context_str)
+            console.print(f"✅ Context saved to '{out_path}'.", style="green")
+        
+        elif action == "Copy context to clipboard":
+            try:
+                import pyperclip
+                pyperclip.copy(final_context_str)
+                console.print("✅ Context copied to clipboard.", style="green")
+            except ImportError:
+                console.print("❌ 'pyperclip' is required. `pip install pyperclip`", style="red")
+        
+        elif action == "Update code with LLM":
+            session = ChatSession(args, scopes, recipes)
+            session.context = final_context_str
+            session.run_llm_interaction_loop(task_prompt_method=session._prompt_for_task_or_recipe)
+        
+        else:
+            console.print("Cancelled.", style="yellow")
+
+    except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError):
+        console.print("\n👋 Wizard session ended by user.", style="bold yellow")
+    except Exception as e:
+        console.print(f"❌ An unexpected error occurred: {e}", style="red")
