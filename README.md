@@ -7,82 +7,103 @@
 </p>
 
 ## About
-PatchLLM is a command-line tool that lets you flexibly build LLM context from your codebase using glob patterns, URLs, and keyword searches. It then automatically applies file edits directly from the LLM's response.
+PatchLLM is a command-line tool that lets you flexibly build LLM context from your codebase, provide instructions, and automatically apply file edits directly from the LLM's response.
 
-## Usage
-PatchLLM is designed to be used directly from your terminal. The core workflow is to define a **scope** of files, provide a **task**, and choose an **action** (like patching files directly).
+## Getting Started
 
-### 1. Initialize a Scope
-The easiest way to get started is to run the interactive initializer. This will create a `scopes.py` file for you, which holds your saved scopes.
-
+**1. Initialize a configuration file:**
+This creates a `scopes.py` file to define file collections.
 ```bash
 patchllm --init
 ```
 
-This will guide you through creating your first scope, including setting a base path and file patterns. You can add multiple scopes to this file for different projects or tasks.
-
-A generated `scopes.py` might look like this:
+**2. (Optional) Create a recipe file:**
+Create a `recipes.py` for reusable tasks.
 ```python
-# scopes.py
-scopes = {
-    "default": {
-        "path": ".",
-        "include_patterns": ["**/*.py"],
-        "exclude_patterns": ["**/tests/*", "venv/*"],
-        "urls": ["https://docs.python.org/3/library/argparse.html"]
-    },
-    "docs": {
-        "path": "./docs",
-        "include_patterns": ["**/*.md"],
-    }
+# recipes.py
+recipes = {
+    "add_tests": "Write comprehensive pytest unit tests for the provided code. Mock any external dependencies.",
+    "refactor_dry": "Refactor the code to improve readability and reduce duplication (DRY principle).",
+    "add_docs": "Generate Google-style docstrings for all public functions and classes."
 }
 ```
 
-### 2. Run a Task
-Use the `patchllm` command with a scope, a task, and an action flag like `--patch` (`-p`).
+**3. Run a task:**
+Combine a **scope**, a **task** (or **recipe**), and an **action** (`--patch`).
 
 ```bash
-# Apply a change using the 'default' scope and the --patch action
-patchllm -s default -t "Add type hints to the main function in main.py" -p
+# Run with an ad-hoc task
+patchllm -s default -t "Add type hints to the main function" -p
+
+# Run with a pre-defined recipe
+patchllm -s default -r add_docs -p
 ```
 
-The tool will then:
-1.  Build a context from the files and URLs matching your `default` scope.
-2.  Send the context and your task to the configured LLM.
-3.  Parse the response and automatically write the changes to the relevant files.
+## Modes of Operation
 
-### All Commands & Options
+- **Direct Mode:** The standard CLI usage shown above.
+- **Chat Mode:** A guided, conversational interface for complex changes.
+  ```bash
+  patchllm --chat
+  ```
+- **Interactive Mode:** Visually select files and folders to build the context.
+  ```bash
+  patchllm --interactive -t "My task for the selected files" -p
+  ```
 
-#### Core Patching Flow
-*   `-s, --scope <name>`: Name of the scope to use from your `scopes.py` file.
-*   `-t, --task "<instruction>"`: The task instruction for the LLM.
-*   `-p, --patch`: Query the LLM and directly apply the file updates from the response. **This is the main action flag.**
+## All Commands & Options
 
-#### Scope Management
-*   `-i, --init`: Create a new scope interactively.
-*   `-sl, --list-scopes`: List all available scopes from your `scopes.py` file.
-*   `-ss, --show-scope <name>`: Display the settings for a specific scope.
+#### **Core Actions**
+| Flag | Alias | Description |
+|---|---|---|
+| `--patch` | `-p` | **Main action:** Query the LLM and apply file changes. |
+| `--chat` | `-c` | Start an interactive chat session. |
+| `--interactive` | `-in`| Interactively select files/folders for the context. |
 
-#### I/O & Context Management
-*   `-co, --context-out [filename]`: Export the generated context to a file (defaults to `context.md`) instead of running a task.
-*   `-ci, --context-in <filename>`: Use a previously saved context file as input for a task.
-*   `-tf, --to-file [filename]`: Send the LLM response to a file (defaults to `response.md`) instead of patching directly.
-*   `-tc, --to-clipboard`: Copy the LLM response to the clipboard.
-*   `-ff, --from-file <filename>`: Apply patches from a local file instead of an LLM response.
-*   `-fc, --from-clipboard`: Apply patches directly from your clipboard content.
+#### **Task & Recipe Input**
+| Flag | Alias | Description |
+|---|---|---|
+| `--task "<...>" `| `-t` | Provide a specific instruction to the LLM. |
+| `--recipe <name>` | `-r` | Use a predefined task from `recipes.py`. |
+| `--voice` | `-v` | Use voice recognition for the task instruction. |
 
-#### General Options
-*   `--model <model_name>`: Specify a different model (e.g., `gpt-4o`). Defaults to `gemini/gemini-1.5-flash`.
-*   `--voice`: Enable voice recognition to provide the task instruction.
+#### **Scope & Context Definition**
+| Flag | Alias | Description |
+|---|---|---|
+| `--scope <name>` | `-s` | Use a static scope from `scopes.py` or a dynamic one (e.g., `@git:staged`, `@search:"term"`). |
+| `--init` | `-i` | Create a new `scopes.py` file. |
+| `--list-scopes`| `-sl`| List all available scopes. |
+| `--show-scope` | `-ss`| Display the settings for a specific scope. |
 
-### Setup
+#### **Input/Output**
+| Flag | Alias | Description |
+|---|---|---|
+| `--context-out` | `-co` | Export the generated context to a file (e.g., `context.md`). |
+| `--context-in` | `-ci` | Use a local context file as input. |
+| `--to-file` | `-tf` | Save LLM response to a file instead of patching. |
+| `--to-clipboard`| `-tc`| Copy LLM response to the clipboard. |
+| `--from-file` | `-ff` | Apply patches from a local file. |
+| `--from-clipboard`|`-fc`| Apply patches from the clipboard. |
 
-PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm) under the hood. Please refer to their documentation for setting up API keys (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) in a `.env` file and for a full list of available models.
+#### **General Options**
+| Flag | Alias | Description |
+|---|---|---|
+| `--model` | `-m` | Specify a different model (default: `gemini/gemini-1.5-flash`). |
 
-To use the voice feature (`--voice`), you will need to install extra dependencies:
+## Setup
+
+PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm). Refer to their documentation for setting up API keys (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) in a `.env` file.
+
+Optional features require extra dependencies:
 ```bash
-pip install "speechrecognition>=3.10" "pyttsx3>=2.90"
-# Note: speechrecognition may require PyAudio, which might have system-level dependencies.
+# For --voice
+pip install "patchllm[voice]"
+
+# For URL support in scopes
+pip install "patchllm[url]"
+
+# For --interactive and --chat modes
+pip install "patchllm[interactive]"
 ```
 
 ## License
