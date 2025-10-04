@@ -15,8 +15,9 @@ def _extract_symbols_by_regex(content: str, lang_patterns: list) -> dict:
     symbols = {"imports": [], "class": [], "function": []}
     for line in content.splitlines():
         for symbol_type, pattern in lang_patterns:
-            if pattern.match(line):
-                symbols[symbol_type].append(line.strip())
+            match = pattern.match(line)
+            if match:
+                symbols[symbol_type].append(match.group(0).strip())
                 break
     return symbols
 
