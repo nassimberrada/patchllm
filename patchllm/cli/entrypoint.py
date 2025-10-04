@@ -96,13 +96,11 @@ def main():
         console.print(f"❌ Error loading recipes file: {e}", style="red")
         return
 
-    # --- START OF MODIFICATION ---
     # If no arguments are provided, start the new guided interactive flow.
     # We check for more than 1 because sys.argv[0] is the script name itself.
     if len(sys.argv) == 1:
-        handle_interactive_wizard_flow(args, scopes, recipes)
+        handle_interactive_wizard_flow(args, scopes, recipes, scopes_file_path, parser)
         return
-    # --- END OF MODIFICATION ---
 
     if args.init:
         handle_init(scopes_file_path)

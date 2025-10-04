@@ -47,6 +47,8 @@ def handle_scope_management(args, scopes, scopes_file_path, parser):
             return
         scopes[args.add_scope] = {"path": ".", "include_patterns": ["**/*"], "exclude_patterns": []}
         write_scopes_to_file(scopes_file_path, scopes)
+        console.print(f"✅ Scope '[bold]{args.add_scope}[/]' added.", style="green")
+
 
     elif args.remove_scope:
         if args.remove_scope not in scopes:
@@ -54,6 +56,7 @@ def handle_scope_management(args, scopes, scopes_file_path, parser):
             return
         del scopes[args.remove_scope]
         write_scopes_to_file(scopes_file_path, scopes)
+        console.print(f"✅ Scope '[bold]{args.remove_scope}[/]' removed.", style="green")
 
     elif args.update_scope:
         if len(args.update_scope) < 2:
@@ -251,6 +254,66 @@ def handle_chat_flow(args, scopes, recipes):
 
 # --- START OF WIZARD FUNCTIONS ---
 
+def _wizard_main_menu():
+    """The new goal-oriented main menu for the interactive wizard."""
+    try:
+        question = {
+            "type": "list", "name": "action",
+            "message": "What would you like to do?",
+            "choices": [
+                {"name": "Start a new task (guided mode)", "value": "new_task"},
+                {"name": "Manage scopes", "value": "manage_scopes"},
+                # Future options can be added here
+                # {"name": "Run a 'Quick Action' (Recipe + Scope)", "value": "quick_action", "disabled": True},
+                # {"name": "Repeat the last task", "value": "repeat_last", "disabled": True},
+                {"name": "Exit", "value": "exit"},
+            ], "border": True, "cycle": False,
+        }
+        result = prompt([question])
+        return result.get("action") if result else None
+    except (InvalidArgument, IndexError, KeyError, TypeError):
+        return "exit"
+
+def _wizard_manage_scopes(args, scopes, scopes_file_path, parser):
+    """Interactive sub-menu for managing scopes within the wizard."""
+    try:
+        question = {
+            "type": "list", "name": "action", "message": "Scope Management",
+            "choices": ["List scopes", "Show a scope", "Add a scope", "Remove a scope", "Update a scope", {"name": "Back to main menu", "value": "back"}],
+            "border": True,
+        }
+        result = prompt([question])
+        action = result.get("action") if result else "back"
+
+        if action == "List scopes":
+            args.list_scopes = True
+        elif action == "Show a scope":
+            scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to show?", "choices": sorted(scopes.keys())}
+            scope_r = prompt([scope_q])
+            if scope_r: args.show_scope = scope_r.get("scope")
+        elif action == "Add a scope":
+            scope_q = {"type": "input", "name": "scope", "message": "Name for the new scope:"}
+            scope_r = prompt([scope_q])
+            if scope_r: args.add_scope = scope_r.get("scope")
+        elif action == "Remove a scope":
+            scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to remove?", "choices": sorted(scopes.keys())}
+            scope_r = prompt([scope_q])
+            if scope_r: args.remove_scope = scope_r.get("scope")
+        elif action == "Update a scope":
+            # This is complex for interactive mode, so we direct them to the command line usage
+            console.print("To update a scope, please use the command-line flag:", style="yellow")
+            console.print("  patchllm --update-scope <scope_name> \"key=['value']\"", style="cyan")
+            return
+        elif action == "back":
+            return
+
+        # Call the original handler with the dynamically set arguments
+        if any([args.list_scopes, args.show_scope, args.add_scope, args.remove_scope]):
+            handle_scope_management(args, scopes, scopes_file_path, parser)
+
+    except (InvalidArgument, IndexError, KeyError, TypeError):
+        return
+
 def _wizard_select_context_source(args, scopes):
     """Step 1: Asks the user how they want to build the context."""
     try:
@@ -340,55 +403,68 @@ def _wizard_refine_context(initial_files, base_path):
             if files_to_remove is not None:
                 current_files = {f for f in current_files if f.relative_to(base_path).as_posix() not in files_to_remove}
 
-def handle_interactive_wizard_flow(args, scopes, recipes):
+def _wizard_start_new_task_flow(args, scopes, recipes):
+    """The original wizard flow for building context and running a task."""
+    base_path = Path(".").resolve()
+    context_object = _wizard_select_context_source(args, scopes)
+    if not context_object or not context_object.get("context"):
+        console.print("Context building cancelled or failed.", style="yellow")
+        return
+
+    initial_files = context_object.get("files", [])
+    final_files = initial_files
+    if initial_files:
+         final_files = _wizard_refine_context(initial_files, base_path)
+         if final_files is None:
+             console.print("Cancelled during context refinement.", style="yellow")
+             return
+    
+    final_context_str = helpers._format_context(final_files, [], base_path)['context']
+
+    action_question = {"type": "list", "name": "action", "message": "What would you like to do with the final context?", "choices": ["Update code with LLM", "Save context to file", "Copy context to clipboard", "Cancel"], "border": True}
+    result = prompt([action_question])
+    action = result.get("action") if result else None
+
+    if action == "Save context to file":
+        path_question = {"type": "input", "name": "path", "message": "Enter filename:", "default": "context.md"}
+        path_result = prompt([path_question])
+        out_path = path_result.get("path") if path_result else None
+        if not out_path: return
+        Path(out_path).write_text(final_context_str)
+        console.print(f"✅ Context saved to '{out_path}'.", style="green")
+    
+    elif action == "Copy context to clipboard":
+        try:
+            import pyperclip
+            pyperclip.copy(final_context_str)
+            console.print("✅ Context copied to clipboard.", style="green")
+        except ImportError:
+            console.print("❌ 'pyperclip' is required. `pip install pyperclip`", style="red")
+    
+    elif action == "Update code with LLM":
+        from ..chat.chat import ChatSession
+        session = ChatSession(args, scopes, recipes)
+        session.context = final_context_str
+        session.run_llm_interaction_loop(task_prompt_method=session._prompt_for_task_or_recipe)
+    
+    else: # Cancel
+        return
+
+def handle_interactive_wizard_flow(args, scopes, recipes, scopes_file_path, parser):
     """Orchestrates a guided, interactive session when `patchllm` is run with no flags."""
     console.print("🤖 Welcome to the PatchLLM Interactive Wizard!", style="bold blue")
-    base_path = Path(".").resolve()
-
+    
     try:
-        from ..chat.chat import ChatSession
-        context_object = _wizard_select_context_source(args, scopes)
-        if not context_object or not context_object.get("context"):
-            console.print("Context building cancelled or failed. Exiting.", style="yellow")
-            return
-
-        initial_files = context_object.get("files", [])
-        final_files = initial_files
-        if initial_files:
-             final_files = _wizard_refine_context(initial_files, base_path)
-             if final_files is None:
-                 console.print("Cancelled during context refinement. Exiting.", style="yellow")
-                 return
+        while True:
+            choice = _wizard_main_menu()
+            if choice == "new_task":
+                _wizard_start_new_task_flow(args, scopes, recipes)
+            elif choice == "manage_scopes":
+                _wizard_manage_scopes(args, scopes, scopes_file_path, parser)
+            elif choice == "exit" or choice is None:
+                break
         
-        final_context_str = helpers._format_context(final_files, [], base_path)['context']
-
-        action_question = {"type": "list", "name": "action", "message": "What would you like to do with the final context?", "choices": ["Update code with LLM", "Save context to file", "Copy context to clipboard", "Cancel"], "border": True}
-        result = prompt([action_question])
-        action = result.get("action") if result else None
-
-        if action == "Save context to file":
-            path_question = {"type": "input", "name": "path", "message": "Enter filename:", "default": "context.md"}
-            path_result = prompt([path_question])
-            out_path = path_result.get("path") if path_result else None
-            if not out_path: return
-            Path(out_path).write_text(final_context_str)
-            console.print(f"✅ Context saved to '{out_path}'.", style="green")
-        
-        elif action == "Copy context to clipboard":
-            try:
-                import pyperclip
-                pyperclip.copy(final_context_str)
-                console.print("✅ Context copied to clipboard.", style="green")
-            except ImportError:
-                console.print("❌ 'pyperclip' is required. `pip install pyperclip`", style="red")
-        
-        elif action == "Update code with LLM":
-            session = ChatSession(args, scopes, recipes)
-            session.context = final_context_str
-            session.run_llm_interaction_loop(task_prompt_method=session._prompt_for_task_or_recipe)
-        
-        else:
-            console.print("Cancelled.", style="yellow")
+        console.print("\n👋 Exiting PatchLLM Wizard. Goodbye!", style="bold yellow")
 
     except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError):
         console.print("\n👋 Wizard session ended by user.", style="bold yellow")
