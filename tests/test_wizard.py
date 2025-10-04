@@ -40,8 +40,8 @@ def test_wizard_full_update_code_flow(mock_wizard_prompts, mock_llm_for_wizard, 
             {"source": "saved"},             # Context Source: Select "saved scopes"
             {"scope": "base"},               # Scope Selection
             {"action": "Proceed"},           # Refine Context: Select "Proceed"
-            {"action": "Update code with LLM"}, # Final Action
-            {"action": "exit"},              # Main Menu: Select "Exit" to terminate the loop
+            {"action": "Update code with LLM"}, # Final Action -> breaks inner loop
+            {"action": "exit"},              # Main Menu: Select "Exit" to terminate outer loop
         ]
 
         mock_chat_prompts.side_effect = [
@@ -61,6 +61,7 @@ def test_wizard_full_update_code_flow(mock_wizard_prompts, mock_llm_for_wizard, 
                 main()
 
     # --- Assertions ---
+    # Corrected the expected call count from 5 to 6.
     assert mock_wizard_prompts.call_count == 6
     assert mock_chat_prompts.call_count == 4
     mock_llm_for_wizard.assert_called_once()
@@ -71,15 +72,15 @@ def test_wizard_save_to_file_flow(mock_wizard_prompts, temp_project, temp_scopes
     # --- Mocks Setup ---
     output_file = temp_project / "wizard_context.md"
     
-    # --- Add main menu selection and exit choice ---
     mock_wizard_prompts.side_effect = [
-        {"action": "new_task"},           # Main Menu: Select "Start new task"
-        {"source": "saved"},              # Context Source: "saved"
-        {"scope": "js_and_css"},          # Scope Selection
-        {"action": "Proceed"},            # Refine Context: "Proceed"
-        {"action": "Save context to file"}, # Final Action
-        {"path": str(output_file)},       # File path for saving
-        {"action": "exit"},               # Main Menu: "Exit"
+        {"action": "new_task"},               # Main Menu: Select "Start new task"
+        {"source": "saved"},                  # Context Source: "saved"
+        {"scope": "js_and_css"},              # Scope Selection
+        {"action": "Proceed"},                # Refine Context: "Proceed"
+        {"action": "Save context to file"},   # Final Action
+        {"path": str(output_file)},           # File path for saving
+        {"action": "back"},                   # Back to main menu from action menu
+        {"action": "exit"},                   # Main Menu: "Exit"
     ]
 
     # --- Run Test ---
@@ -97,9 +98,6 @@ def test_wizard_save_to_file_flow(mock_wizard_prompts, temp_project, temp_scopes
 
 def test_wizard_scope_management_flow(mock_wizard_prompts, temp_scopes_file, capsys):
     # --- Mocks Setup ---
-    # 1. Main menu -> manage scopes
-    # 2. Scope menu -> list scopes
-    # 3. Main menu -> exit
     mock_wizard_prompts.side_effect = [
         {"action": "manage_scopes"},
         {"action": "List scopes"},
@@ -119,7 +117,6 @@ def test_wizard_scope_management_flow(mock_wizard_prompts, temp_scopes_file, cap
 
 def test_wizard_exit_flow(mock_wizard_prompts, capsys):
     # --- Mocks Setup ---
-    # 1. Main menu -> exit
     mock_wizard_prompts.side_effect = [{"action": "exit"}]
 
     # --- Run Test ---
@@ -129,5 +126,42 @@ def test_wizard_exit_flow(mock_wizard_prompts, capsys):
     # --- Assertions ---
     captured = capsys.readouterr()
     assert "Exiting PatchLLM Wizard" in captured.out
-    # Ensure no other flows were started
     assert "How would you like to build the context?" not in captured.out
+
+def test_wizard_save_as_scope_flow(mock_wizard_prompts, temp_project, temp_scopes_file):
+    # --- Setup ---
+    os.chdir(temp_project)
+    
+    mock_wizard_prompts.side_effect = [
+        # Main Menu
+        {"action": "new_task"},
+        # Context building: select the 'js_and_css' scope
+        {"source": "saved"},
+        {"scope": "js_and_css"},
+        # Context refinement
+        {"action": "Proceed"},
+        # Context action menu (first loop): Save the context
+        {"action": "Save this context as a new scope"},
+        {"name": "my_web_files"}, # Provide name for the new scope
+        # Context action menu (second loop): Go back
+        {"action": "back"},
+        # Main Menu
+        {"action": "exit"},
+    ]
+
+    # --- Run Test ---
+    with patch.dict('os.environ', {'PATCHLLM_SCOPES_FILE': temp_scopes_file.as_posix()}):
+        with patch.object(sys, 'argv', ['patchllm']):
+            main()
+
+    # --- Assertions ---
+    updated_scopes = load_from_py_file(temp_scopes_file, "scopes")
+
+    assert "my_web_files" in updated_scopes
+    
+    new_scope_data = updated_scopes["my_web_files"]
+    assert new_scope_data["path"] == "."
+    
+    expected_files = sorted(['src/component.js', 'src/styles.css'])
+    assert sorted(new_scope_data["include_patterns"]) == expected_files
+    assert new_scope_data["exclude_patterns"] == []
