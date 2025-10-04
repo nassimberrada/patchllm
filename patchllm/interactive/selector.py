@@ -49,27 +49,31 @@ def select_files_interactively(base_path: Path) -> list[Path]:
         
     questions = [
         {
-            "type": "checkbox",
-            "message": "Select files and/or folders for the context:",
+            "type": "fuzzy",
+            "name": "selected_items",
+            "message": "Fuzzy search and select files/folders for the context:",
             "choices": choices,
             "validate": EmptyInputValidator("You must select at least one item."),
             "transformer": lambda result: f"{len(result)} item(s) selected",
-            "long_instruction": "Press <space> to toggle selection, <enter> to confirm.",
+            "long_instruction": "Press <tab> or <ctrl+space> to select, <enter> to confirm.",
             "border": True,
             "cycle": False,
+            "multiselect": True,
         }
     ]
     
     try:
         console.print("\n--- Interactive File Selection ---", style="bold")
         result = prompt(questions, vi_mode=True)
-        if not result or not result[0]:
+        
+        selected_choices = result.get("selected_items") if result else []
+        if not selected_choices:
             return []
 
         path_extraction_pattern = re.compile(r"[📁📄]\s(.*)")
         
         selected_paths_str = []
-        for selection in result[0]:
+        for selection in selected_choices:
             match = path_extraction_pattern.search(selection)
             if match:
                 selected_paths_str.append(match.group(1).rstrip('/'))

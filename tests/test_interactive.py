@@ -24,9 +24,9 @@ def test_build_choices_recursively(temp_project):
     assert not any("data.log" in choice for choice in plain_choices)
 
 @patch('patchllm.interactive.selector.prompt', new_callable=MagicMock)
-def test_interactive_flag_flow_files(mock_prompt, temp_project):
+def test_interactive_flag_flow_files_with_fuzzy(mock_prompt, temp_project):
     selected_items = ['├── 📄 main.py', '│   └── 📄 src/styles.css']
-    mock_prompt.return_value = [selected_items]
+    mock_prompt.return_value = {"selected_items": selected_items}
     
     output_file = temp_project / "context_output.md"
     original_cwd = os.getcwd()
@@ -44,9 +44,9 @@ def test_interactive_flag_flow_files(mock_prompt, temp_project):
     assert "utils.py" not in content
 
 @patch('patchllm.interactive.selector.prompt', new_callable=MagicMock)
-def test_interactive_flag_flow_folder(mock_prompt, temp_project):
+def test_interactive_flag_flow_folder_with_fuzzy(mock_prompt, temp_project):
     selected_items = ['└── 📁 src/']
-    mock_prompt.return_value = [selected_items]
+    mock_prompt.return_value = {"selected_items": selected_items}
     
     output_file = temp_project / "context_output.md"
     original_cwd = os.getcwd()
