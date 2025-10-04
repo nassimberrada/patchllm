@@ -8,6 +8,7 @@ from rich.panel import Panel
 
 from ..utils import write_scopes_to_file
 from ..parser import paste_response
+from ..patcher import apply_external_patch
 from ..scopes.builder import build_context, build_context_from_files, helpers
 from ..llm import run_llm_query
 
@@ -77,22 +78,27 @@ def handle_scope_management(args, scopes, scopes_file_path, parser):
 
 def handle_file_io(args):
     """Handles commands that read from files or clipboard to apply patches."""
+    content_to_patch = None
     if args.from_clipboard:
         try:
             import pyperclip
-            updates = pyperclip.paste()
-            if updates:
-                paste_response(updates)
-            else:
+            content_to_patch = pyperclip.paste()
+            if not content_to_patch:
                 console.print("⚠️ Clipboard is empty.", style="yellow")
+                return
         except ImportError:
             console.print("❌ 'pyperclip' is required. `pip install pyperclip`", style="red")
+            return
     elif args.from_file:
         try:
-            updates = Path(args.from_file).read_text(encoding="utf-8")
-            paste_response(updates)
+            content_to_patch = Path(args.from_file).read_text(encoding="utf-8")
         except Exception as e:
             console.print(f"❌ Failed to read from file {args.from_file}: {e}", style="red")
+            return
+
+    if content_to_patch:
+        base_path = Path(".").resolve()
+        apply_external_patch(content_to_patch, base_path)
 
 def _collect_context(args, scopes):
     """Helper to determine and build the context from args."""
@@ -117,8 +123,6 @@ def _collect_context(args, scopes):
         console.print("\n--- Context Summary ---", style="bold")
         console.print(tree)
         
-        # --- CORRECTION: No longer need to re-parse the context string. ---
-        # The 'files' key is now correctly populated by the builder functions.
         return context_object
     
     if any([args.interactive, args.scope]):
@@ -262,10 +266,8 @@ def _wizard_main_menu():
             "message": "What would you like to do?",
             "choices": [
                 {"name": "Start a new task (guided mode)", "value": "new_task"},
+                {"name": "Apply a patch from file/clipboard", "value": "apply_patch"},
                 {"name": "Manage scopes", "value": "manage_scopes"},
-                # Future options can be added here
-                # {"name": "Run a 'Quick Action' (Recipe + Scope)", "value": "quick_action", "disabled": True},
-                # {"name": "Repeat the last task", "value": "repeat_last", "disabled": True},
                 {"name": "Exit", "value": "exit"},
             ], "border": True, "cycle": False,
         }
@@ -302,7 +304,6 @@ def _wizard_manage_scopes(args, scopes, scopes_file_path, parser):
         elif action == "back":
             return
 
-        # Call the original handler with the dynamically set arguments
         if any([args.list_scopes, args.show_scope, args.add_scope, args.remove_scope]):
             handle_scope_management(args, scopes, scopes_file_path, parser)
 
@@ -475,6 +476,57 @@ def _wizard_start_new_task_flow(args, scopes, recipes, scopes_file_path):
         else: # Back to main menu or None
             break
 
+def _wizard_apply_patch_flow():
+    """Handles the wizard flow for applying an external patch."""
+    try:
+        source_question = {
+            "type": "list", "name": "source",
+            "message": "Where is the patch content located?",
+            "choices": [
+                {"name": "Clipboard", "value": "clipboard"},
+                {"name": "File", "value": "file"},
+                {"name": "Back to main menu", "value": "back"},
+            ], "border": True,
+        }
+        result = prompt([source_question])
+        source = result.get("source") if result else "back"
+
+        content_to_patch = None
+        if source == "clipboard":
+            try:
+                import pyperclip
+                content_to_patch = pyperclip.paste()
+                if not content_to_patch or not content_to_patch.strip():
+                    console.print("⚠️ Clipboard is empty or contains only whitespace.", style="yellow")
+                    return
+            except ImportError:
+                console.print("❌ 'pyperclip' is required for this action. `pip install pyperclip`", style="red")
+                return
+        elif source == "file":
+            path_question = {"type": "input", "name": "path", "message": "Enter the path to the patch file:"}
+            path_result = prompt([path_question])
+            path_str = path_result.get("path") if path_result else None
+            if not path_str:
+                console.print("Cancelled.", style="yellow")
+                return
+            try:
+                content_to_patch = Path(path_str).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                 console.print(f"❌ File not found at '{path_str}'.", style="red")
+                 return
+            except Exception as e:
+                console.print(f"❌ Failed to read file: {e}", style="red")
+                return
+        else: # back or None
+            return
+
+        if content_to_patch:
+            base_path = Path(".").resolve()
+            apply_external_patch(content_to_patch, base_path)
+
+    except (InvalidArgument, IndexError, KeyError, TypeError):
+        return # Go back to main menu
+
 def handle_interactive_wizard_flow(args, scopes, recipes, scopes_file_path, parser):
     """Orchestrates a guided, interactive session when `patchllm` is run with no flags."""
     console.print("🤖 Welcome to the PatchLLM Interactive Wizard!", style="bold blue")
@@ -484,6 +536,8 @@ def handle_interactive_wizard_flow(args, scopes, recipes, scopes_file_path, pars
             choice = _wizard_main_menu()
             if choice == "new_task":
                 _wizard_start_new_task_flow(args, scopes, recipes, scopes_file_path)
+            elif choice == "apply_patch":
+                _wizard_apply_patch_flow()
             elif choice == "manage_scopes":
                 _wizard_manage_scopes(args, scopes, scopes_file_path, parser)
             elif choice == "exit" or choice is None:
