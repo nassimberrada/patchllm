@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 from pathlib import Path
 
-from .context import build_context
+from .context import build_context, build_context_from_files
 from .parser import paste_response
 from .utils import load_from_py_file
 
@@ -109,6 +109,10 @@ def main():
 
     # --- Group: Core Patching Flow ---
     patch_group = parser.add_argument_group('Core Patching Flow')
+    patch_group.add_argument(
+        "-in", "--interactive", action="store_true",
+        help="Interactively build the context by selecting files and folders."
+    )
     patch_group.add_argument(
         "-s", "--scope", type=str, default=None,
         help=textwrap.dedent("""\
@@ -325,9 +329,28 @@ def main():
         speak(f"You said: {task}. Should I proceed?")
         confirm = listen()
         if confirm and "yes" in confirm.lower():
-            if not args.scope:
-                parser.error("A --scope name is required when using --voice.")
-            context = collect_context(args.scope, scopes)
+            if not args.scope and not args.interactive:
+                parser.error("A --scope or --interactive flag is required when using --voice.")
+            
+            if args.interactive:
+                try:
+                    from .interactive import select_files_interactively
+                except ImportError:
+                    speak("The interactive dependency is not installed. Please run pip install patchllm[interactive]")
+                    return
+
+                base_path = Path(".").resolve()
+                selected_files = select_files_interactively(base_path)
+                if selected_files:
+                    context_object = build_context_from_files(selected_files, base_path)
+                    if context_object:
+                            _, context = context_object.values()
+                else:
+                    speak("No files selected. Exiting.")
+                    return
+            else:
+                 context = collect_context(args.scope, scopes)
+
             llm_response = run_llm_query(task, args.model, history, context)
             if llm_response:
                 paste_response(llm_response)
@@ -339,7 +362,32 @@ def main():
     # --- Main LLM Task Logic ---
     context = None
 
-    if args.context_in:
+    if args.interactive:
+        try:
+            from .interactive import select_files_interactively
+        except ImportError:
+            console.print("❌ The 'InquirerPy' library is required for interactive mode.", style="red")
+            console.print("   Please install it with: pip install 'patchllm[interactive]'", style="cyan")
+            return
+            
+        if any([args.scope, args.context_in]):
+            console.print("⚠️  --interactive flag is used; ignoring --scope and --context-in.", style="yellow")
+        
+        base_path = Path(".").resolve()
+        selected_files = select_files_interactively(base_path)
+        
+        if selected_files:
+            context_object = build_context_from_files(selected_files, base_path)
+            if context_object:
+                tree, context = context_object.values()
+                console.print("\n--- Context Building Finished. The following files were selected ---", style="bold")
+                console.print(tree)
+        else:
+            if "context_object" not in locals():
+                console.print("No files selected. Exiting.", style="yellow")
+                return
+
+    elif args.context_in:
         context = read_from_file(args.context_in)
     elif args.scope:
         context = collect_context(args.scope, scopes)
@@ -358,8 +406,8 @@ def main():
         if sum(action_flags) > 1:
             parser.error("Please specify only one action: --patch, --to-file, or --to-clipboard.")
 
-        if not args.scope and not args.context_in:
-            parser.error("A --scope or --context-in is required to build context for a task.")
+        if not any([args.scope, args.context_in, args.interactive, args.guidelines]):
+            parser.error("A scope (-s), context-in (-ci), interactive (-in), or guidelines (-g) is required for a task.")
 
         if context and args.context_out:
             write_to_file(args.context_out, context)
@@ -393,7 +441,7 @@ def main():
         if context:
             write_to_file(args.context_out, context)
         else:
-            console.print("No context to export. A scope (-s), context-in (-ci), or guidelines (-g) must be provided.", style="yellow")
+            console.print("No context to export. A scope (-s), context-in (-ci), interactive (-in), or guidelines (-g) must be provided.", style="yellow")
 
 if __name__ == "__main__":
     main()

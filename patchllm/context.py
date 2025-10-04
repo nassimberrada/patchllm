@@ -374,6 +374,17 @@ def _build_structure_context(base_path: Path) -> dict | None:
 
 # --- Main Context Building Function ---
 
+def build_context_from_files(file_paths: list[Path], base_path: Path) -> dict | None:
+    """
+    Builds the context string directly from a provided list of file paths.
+    """
+    if not file_paths:
+        console.print("\n⚠️  No files were provided to build the context.", style="yellow")
+        return None
+    
+    return _format_context(file_paths, [], base_path)
+
+
 def build_context(scope_name: str, scopes: dict, base_path: Path) -> dict | None:
     """
     Builds the context string from files, handling both static and dynamic scopes.
