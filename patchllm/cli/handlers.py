@@ -216,3 +216,17 @@ def handle_voice_flow(args, scopes, parser):
             speak("Changes applied.")
     else:
         speak("Cancelled.")
+
+def handle_chat_flow(args, scopes):
+    """Handles the interactive chat workflow."""
+    try:
+        from ..chat.chat import ChatSession
+        session = ChatSession(args, scopes)
+        session.start()
+    except ImportError:
+        console.print("❌ 'InquirerPy' is required for chat mode.", style="red")
+        console.print("   Install it with: pip install 'patchllm[interactive]'", style="cyan")
+    except KeyboardInterrupt:
+        console.print("\n👋 Chat session ended by user.", style="bold yellow")
+    except Exception as e:
+        console.print(f"❌ An unexpected error occurred in chat mode: {e}", style="red")

@@ -6,7 +6,7 @@ from rich.console import Console
 
 from .handlers import (
     handle_init, handle_scope_management, handle_file_io, 
-    handle_main_task_flow, handle_voice_flow
+    handle_main_task_flow, handle_voice_flow, handle_chat_flow
 )
 from ..utils import load_from_py_file
 
@@ -29,6 +29,10 @@ def main():
     code_io = parser.add_argument_group('Code I/O')
     options_group = parser.add_argument_group('General Options')
 
+    patch_group.add_argument(
+        "-c", "--chat", action="store_true",
+        help="Start an interactive chat session to guide the patching process."
+    )
     patch_group.add_argument(
         "-in", "--interactive", action="store_true",
         help="Interactively build the context by selecting files and folders."
@@ -72,10 +76,14 @@ def main():
         scopes = load_from_py_file(scopes_file_path, "scopes")
     except FileNotFoundError:
         scopes = {}
-        if not any([args.list_scopes, args.show_scope, args.add_scope, args.init]):
+        if not any([args.list_scopes, args.show_scope, args.add_scope, args.init, args.chat]):
              console.print(f"⚠️  Scope file '{scopes_file_path}' not found. You can create one with --init.", style="yellow")
     except Exception as e:
         console.print(f"❌ Error loading scopes file: {e}", style="red")
+        return
+
+    if args.chat:
+        handle_chat_flow(args, scopes)
         return
 
     if any([args.list_scopes, args.show_scope, args.add_scope, args.remove_scope, args.update_scope]):
