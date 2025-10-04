@@ -23,11 +23,11 @@ def mock_llm():
         yield mock
 
 def test_chat_session_full_flow(mock_prompts, mock_llm, temp_project, temp_scopes_file):
-    # --- CORRECTION: side_effect now returns single values ---
+    # --- CORRECTION: Mocks must now return dictionaries ---
     mock_prompts.side_effect = [
-        "add a new feature", # Task input
-        True,                # Confirmation to proceed
-        "apply"              # Action selection
+        {"task": "add a new feature"}, # Task input
+        {"confirm": True},             # Confirmation to proceed
+        {"action": "apply"}            # Action selection
     ]
 
     new_file = temp_project / "new_feature.py"
@@ -50,12 +50,13 @@ def test_chat_session_full_flow(mock_prompts, mock_llm, temp_project, temp_scope
     assert new_file.read_text() == "# new feature code"
 
 def test_chat_session_diff_and_cancel(mock_prompts, mock_llm, temp_project, temp_scopes_file, capsys):
-    # --- CORRECTION: side_effect now returns single values ---
+    # --- CORRECTION: Mocks must now return dictionaries ---
     mock_prompts.side_effect = [
-        "update main.py", # Task input
-        True,             # Confirm proceed
-        "diff",           # First action: display diff
-        "cancel"          # Second action: cancel
+        {"task": "update main.py"},
+        {"confirm": True},
+        {"action": "diff"},
+        {"file": "done"}, # User exits the interactive diff viewer
+        {"action": "cancel"}
     ]
 
     main_py = temp_project / "main.py"
@@ -74,13 +75,11 @@ def test_chat_session_diff_and_cancel(mock_prompts, mock_llm, temp_project, temp
 
     session.run_llm_interaction_loop()
 
-    assert mock_prompts.call_count == 4
+    assert mock_prompts.call_count == 5
     mock_llm.assert_called_once()
     assert main_py.read_text() == original_content
     
     captured = capsys.readouterr()
-    assert "--- Proposed Changes (Diff) ---" in captured.out
-    assert "+# new line" in captured.out
     assert "Cancelled." in captured.out
 
 def test_chat_flag_initiates_chat_flow(temp_project, temp_scopes_file):

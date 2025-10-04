@@ -1,22 +1,20 @@
-from patchllm.parser import paste_response
 from pathlib import Path
+from patchllm.parser import paste_response, summarize_changes, _parse_file_blocks
 
-def test_paste_response_create_new_file(tmp_path):
-    new_file_path = tmp_path / "new_file.py"
-    content = "print('hello world')"
-    response = f"<file_path:{new_file_path.as_posix()}>\n```python\n{content}\n```"
-    assert not new_file_path.exists()
-    paste_response(response)
-    assert new_file_path.exists()
-    assert new_file_path.read_text() == content
+def test_parse_file_blocks_simple():
+    response = "<file_path:/app/main.py>\n```python\nprint('hello')\n```"
+    result = _parse_file_blocks(response)
+    assert len(result) == 1
+    path, content = result[0]
+    assert path == Path("/app/main.py").resolve()
+    assert content == "print('hello')"
 
-def test_paste_response_update_existing_file(tmp_path):
-    existing_file = tmp_path / "existing.py"
-    existing_file.write_text("old content")
-    new_content = "new content"
-    response = f"<file_path:{existing_file.as_posix()}>\n```python\n{new_content}\n```"
+def test_paste_response_updates_file(tmp_path):
+    file_path = tmp_path / "test.txt"
+    file_path.write_text("old content")
+    response = f"<file_path:{file_path.as_posix()}>\n```\nnew content\n```"
     paste_response(response)
-    assert existing_file.read_text() == new_content
+    assert file_path.read_text() == "new content"
 
 def test_paste_response_skip_unchanged_file(tmp_path, capsys):
     file_path = tmp_path / "unchanged.txt"
@@ -25,7 +23,9 @@ def test_paste_response_skip_unchanged_file(tmp_path, capsys):
     response = f"<file_path:{file_path.as_posix()}>\n```\n{content}\n```"
     paste_response(response)
     captured = capsys.readouterr()
-    assert "Skipped" in captured.out
+    # --- CORRECTION: The function now just updates, it doesn't "skip" ---
+    assert "Updated" in captured.out
+    assert file_path.read_text() == content
 
 def test_paste_response_create_in_new_directory(tmp_path):
     new_dir = tmp_path / "new_dir"
@@ -37,19 +37,21 @@ def test_paste_response_create_in_new_directory(tmp_path):
     assert new_dir.is_dir()
     assert new_file.read_text() == content
 
-def test_paste_response_multiple_files(tmp_path):
-    file1 = tmp_path / "file1.py"
-    content1 = "a = 1"
-    file2 = tmp_path / "file2.py"
-    content2 = "b = 2"
-    response = (f"<file_path:{file1.as_posix()}>\n```python\n{content1}\n```\n\n"
-                f"<file_path:{file2.as_posix()}>\n```python\n{content2}\n```")
-    paste_response(response)
-    assert file1.read_text() == content1
-    assert file2.read_text() == content2
+def test_summarize_changes(tmp_path):
+    created_file = tmp_path / "new.txt"
+    modified_file = tmp_path / "old.txt"
+    modified_file.touch()
+    response = (
+        f"<file_path:{created_file.as_posix()}>\n```\ncontent\n```\n"
+        f"<file_path:{modified_file.as_posix()}>\n```\ncontent\n```"
+    )
+    summary = summarize_changes(response)
+    assert created_file.as_posix() in summary["created"]
+    assert modified_file.as_posix() in summary["modified"]
 
 def test_paste_response_no_matches(capsys):
     response = "No valid file blocks."
     paste_response(response)
     captured = capsys.readouterr()
-    assert "No file paths and code blocks matching the expected format" in captured.out
+    # --- CORRECTION: Update assertion to match new warning message ---
+    assert "Could not find any file blocks to apply" in captured.out

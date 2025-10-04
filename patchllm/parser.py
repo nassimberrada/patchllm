@@ -1,140 +1,103 @@
-import re
 import difflib
+import re
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-from rich.console import Group
 
 console = Console()
 
-def _parse_file_blocks(response_content):
-    """Generator that yields file path and content from a response."""
-    pattern = re.compile(
-        r"<file_path:([^>]+?)>\s*```(?:.*?)\n(.*?)\n```",
-        re.DOTALL | re.MULTILINE
-    )
-    for match in pattern.finditer(response_content):
-        file_path_str = match.group(1).strip()
-        code_content = match.group(2)
-        if file_path_str:
-            yield Path(file_path_str).resolve(), code_content
-
-def _generate_diff_lines(original_content: str, new_content: str, path: Path) -> list[Text]:
-    """Generates a list of colorized rich Text objects for a diff."""
-    diff_lines = []
-    diff = difflib.unified_diff(
-        original_content.splitlines(),
-        new_content.splitlines(),
-        fromfile=f"a/{path.name}",
-        tofile=f"b/{path.name}",
-        lineterm=""
-    )
+def _parse_file_blocks(response: str) -> list[tuple[Path, str]]:
+    """Parses the LLM response to extract file paths and their content."""
+    pattern = r"<file_path:(.*?)>\n```(?:\w+\n)?(.*?)\n```"
+    matches = re.findall(pattern, response, re.DOTALL)
     
+    parsed_blocks = []
+    for path_str, content in matches:
+        path_obj = Path(path_str.strip()).resolve()
+        # --- CORRECTION: Strip leading/trailing whitespace from content ---
+        parsed_blocks.append((path_obj, content.strip()))
+        
+    return parsed_blocks
+
+def paste_response(response: str):
+    """Applies the file updates from the LLM's response to the local filesystem."""
+    parsed_blocks = _parse_file_blocks(response)
+    if not parsed_blocks:
+        console.print("⚠️  Could not find any file blocks to apply in the response.", style="yellow")
+        return
+        
+    for file_path, new_content in parsed_blocks:
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(new_content, encoding="utf-8")
+            console.print(f"✅ Updated [bold cyan]{file_path.name}[/bold cyan]", style="green")
+        except Exception as e:
+            console.print(f"❌ Failed to write to {file_path}: {e}", style="red")
+
+def summarize_changes(response: str) -> dict:
+    """Summarizes which files will be created and which will be modified."""
+    parsed_blocks = _parse_file_blocks(response)
+    summary = {"created": [], "modified": []}
+    for file_path, _ in parsed_blocks:
+        if file_path.exists():
+            summary["modified"].append(file_path.as_posix())
+        else:
+            summary["created"].append(file_path.as_posix())
+    return summary
+
+def get_diff_for_file(file_path_str: str, response: str) -> str:
+    """Generates a colorized, unified diff for a single file from the response."""
+    parsed_blocks = _parse_file_blocks(response)
+    file_path = Path(file_path_str).resolve()
+    
+    new_content = None
+    for p, content in parsed_blocks:
+        if p == file_path:
+            new_content = content
+            break
+            
+    if new_content is None:
+        return f"Could not find content for {file_path_str} in the response."
+
+    original_content = ""
+    if file_path.exists():
+        try:
+            original_content = file_path.read_text(encoding="utf-8")
+        except Exception:
+            return f"Could not read original content of {file_path_str}."
+
+    diff = difflib.unified_diff(
+        original_content.splitlines(keepends=True),
+        new_content.splitlines(keepends=True),
+        fromfile=f"a/{file_path.name}",
+        tofile=f"b/{file_path.name}",
+    )
+
+    diff_text = Text()
     for line in diff:
         if line.startswith('+'):
-            diff_lines.append(Text(line, style="green"))
+            diff_text.append(line, style="green")
         elif line.startswith('-'):
-            diff_lines.append(Text(line, style="red"))
+            diff_text.append(line, style="red")
         elif line.startswith('^'):
-            diff_lines.append(Text(line, style="blue"))
+            diff_text.append(line, style="blue")
         else:
-            diff_lines.append(Text(line))
+            diff_text.append(line)
             
-    return diff_lines
+    return diff_text
 
-def paste_response(response_content: str):
-    """
-    Parses a response, writes changes to files, and displays a summary
-    panel including a diff of all the changes.
-    """
-    files_written = []
-    files_skipped = []
-    files_failed = []
-    summary_panels = []
-    found_matches = False
-
-    for target_path, code_content in _parse_file_blocks(response_content):
-        found_matches = True
-        original_content = None
-        is_new_file = not target_path.exists()
-
-        try:
-            if not is_new_file:
-                original_content = target_path.read_text('utf-8')
-                if original_content == code_content:
-                    files_skipped.append(str(target_path))
-                    continue
-
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(code_content, 'utf-8')
-            files_written.append(str(target_path))
-
-            if is_new_file:
-                title = f"[bold green]CREATED: {target_path}[/bold green]"
-                border_style = "green"
-                diff_lines = [Text(f"+ {line}", style="green") for line in code_content.splitlines()]
-            else:
-                title = f"[bold cyan]MODIFIED: {target_path}[/bold cyan]"
-                border_style = "cyan"
-                diff_lines = _generate_diff_lines(original_content, code_content, target_path)
-
-            if diff_lines:
-                summary_panels.append(Panel(Text("\n").join(diff_lines), title=title, border_style=border_style, expand=False))
-
-        except Exception as e:
-            files_failed.append(str(target_path))
-
-    summary_text = Text()
-    if not found_matches:
-        summary_text.append("No file paths and code blocks matching the expected format were found.", style="yellow")
-    else:
-        if files_written:
-            summary_text.append(f"✅ Successfully wrote {len(files_written)} file(s).\n", style="green")
-        if files_skipped:
-            summary_text.append(f"ℹ️  Skipped {len(files_skipped)} file(s) (no changes).\n", style="cyan")
-        if files_failed:
-            summary_text.append(f"❌ Failed to write {len(files_failed)} file(s).\n", style="red")
+def display_diff(response: str):
+    """Displays the diff for all changes proposed in the response."""
+    summary = summarize_changes(response)
+    all_files = summary.get("modified", []) + summary.get("created", [])
     
-    # Prepend the summary text to the list of panels
-    render_group = Group(*summary_panels, summary_text)
-    console.print(Panel(render_group, title="[bold]Patch Summary[/bold]", border_style="blue"))
-
-def summarize_changes(response_content):
-    """Parses the response and returns a summary of changes."""
-    created_files = []
-    modified_files = []
-
-    for path, _ in _parse_file_blocks(response_content):
-        if path.exists():
-            modified_files.append(str(path))
-        else:
-            created_files.append(str(path))
-            
-    return {"created": created_files, "modified": modified_files}
-
-def display_diff(response_content):
-    """Displays a unified diff for the proposed changes."""
     console.print("\n--- Proposed Changes (Diff) ---", style="bold yellow")
     
-    for path, new_content in _parse_file_blocks(response_content):
-        if not path.exists():
-            diff_panel = Panel(
-                Text("\n").join(f"+ {line}" for line in new_content.splitlines()),
-                title=f"[bold green]NEW FILE: {path}[/bold green]",
-                border_style="green"
-            )
-            console.print(diff_panel)
-            continue
-            
-        try:
-            original_content = path.read_text('utf-8')
-            diff_lines = _generate_diff_lines(original_content, new_content, path)
-            diff_panel = Panel(
-                Text("\n").join(diff_lines),
-                title=f"[bold cyan]File: {path}[/bold cyan]",
-                border_style="cyan"
-            )
-            console.print(diff_panel)
-        except Exception as e:
-            console.print(f"  [red]Could not generate diff: {e}[/red]")
+    if not all_files:
+        console.print("No file changes detected in the response.")
+        return
+        
+    for file_path in all_files:
+        diff_text = get_diff_for_file(file_path, response)
+        console.print(Panel(diff_text, title=f"[bold cyan]Diff: {Path(file_path).name}[/bold cyan]", border_style="yellow"))

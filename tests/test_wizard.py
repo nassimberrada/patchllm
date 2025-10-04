@@ -34,7 +34,6 @@ def test_wizard_full_update_code_flow(mock_wizard_prompts, mock_llm_for_wizard, 
     mock_llm_for_wizard.return_value = f"<file_path:{new_file.as_posix()}>\n```python\n# wizard code\n```"
     
     with patch('patchllm.chat.chat.prompt') as mock_chat_prompts:
-        # --- CORRECTION: Mocks now return dictionaries ---
         mock_wizard_prompts.side_effect = [
             {"source": "saved"},
             {"scope": "base"},
@@ -42,13 +41,14 @@ def test_wizard_full_update_code_flow(mock_wizard_prompts, mock_llm_for_wizard, 
             {"action": "Update code with LLM"},
         ]
 
+        # --- CORRECTION: The list choice prompt returns a dict with the name of the prompt ---
         mock_chat_prompts.side_effect = [
-            ("manual", None),
-            {"task": "create a new file"},
-            {"confirm": True},
-            {"action": "apply"}
+            {"choice": ("manual", None)}, # Task or Recipe choice
+            {"task": "create a new file"},  # Manual task input
+            {"confirm": True},             # Confirm proceed
+            {"action": "apply"}            # Action choice
         ]
-        
+
         # --- Run Test ---
         os.chdir(temp_project)
         with patch.dict('os.environ', {
@@ -69,7 +69,6 @@ def test_wizard_save_to_file_flow(mock_wizard_prompts, temp_project, temp_scopes
     # --- Mocks Setup ---
     output_file = temp_project / "wizard_context.md"
     
-    # --- CORRECTION: Mocks now return dictionaries ---
     mock_wizard_prompts.side_effect = [
         {"source": "saved"},
         {"scope": "js_and_css"},

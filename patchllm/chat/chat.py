@@ -1,14 +1,13 @@
 import textwrap
 from pathlib import Path
 from rich.console import Console
+from rich.panel import Panel
 from InquirerPy import prompt
 from InquirerPy.validator import EmptyInputValidator
 from InquirerPy.exceptions import InvalidArgument
 
-# MODIFICATION: Import 'run_llm_query' from llm module directly
 from ..llm import run_llm_query
-from ..parser import paste_response, summarize_changes, display_diff
-# MODIFICATION: Import helpers from handlers is no longer needed here
+from ..parser import paste_response, summarize_changes, get_diff_for_file
 from ..cli.handlers import get_system_prompt, _collect_context
 
 console = Console()
@@ -28,32 +27,19 @@ class ChatSession:
         
         choices = sorted(self.scopes.keys())
         try:
-            question = {
-                "type": "fuzzy",
-                "message": "Which scope would you like to work with?",
-                "choices": choices,
-                "validate": EmptyInputValidator(),
-                "border": True,
-            }
-            # --- CORRECTION: InquirerPy returns the value directly, not in a list ---
-            return prompt(question, vi_mode=True)
+            question = {"type": "fuzzy", "name": "scope", "message": "Which scope would you like to work with?", "choices": choices, "validate": EmptyInputValidator(), "border": True}
+            result = prompt([question], vi_mode=True)
+            return result.get("scope")
         except (InvalidArgument, IndexError, KeyError):
-            return None # User cancelled
+            return None
 
     def _prompt_for_task(self):
         try:
-            question = {
-                "type": "input",
-                "message": "What is your task?",
-                "long_instruction": "You can press Enter to open your default editor for a longer message.",
-                "multiline": True,
-                "validate": EmptyInputValidator(),
-                "border": True,
-            }
-            # --- CORRECTION: InquirerPy returns the value directly ---
-            return prompt(question, vi_mode=True)
+            question = {"type": "input", "name": "task", "message": "What is your task?", "long_instruction": "You can press Enter to open your default editor for a longer message.", "multiline": True, "validate": EmptyInputValidator(), "border": True}
+            result = prompt([question], vi_mode=True)
+            return result.get("task")
         except (InvalidArgument, IndexError, KeyError):
-            return None # User cancelled
+            return None
 
     def _prompt_for_task_or_recipe(self):
         """Allows user to select a recipe or enter a manual task."""
@@ -64,31 +50,25 @@ class ChatSession:
             choices = [{"name": f"[Recipe] {name}", "value": ("recipe", name)} for name in self.recipes.keys()]
             choices.append({"name": "[Manual] Enter a new task instruction", "value": ("manual", None)})
             
-            question = {
-                "type": "list",
-                "message": "How would you like to define the task?",
-                "choices": choices,
-                "border": True,
-            }
-            task_type, value = prompt(question, vi_mode=True)
+            question = {"type": "list", "name": "choice", "message": "How would you like to define the task?", "choices": choices, "border": True}
+            result = prompt([question], vi_mode=True)
+            if not result: return None
+            task_type, value = result.get("choice")
 
             if task_type == "recipe":
                 return self.recipes.get(value)
             return self._prompt_for_task()
             
-        except (InvalidArgument, IndexError, KeyError):
-            return None # User cancelled
+        except (InvalidArgument, IndexError, KeyError, TypeError):
+            return None
 
     def _confirm_proceed(self):
         try:
-            # --- CORRECTION: confirm prompt returns a boolean directly ---
-            return prompt({
-                "type": "confirm",
-                "message": "Proceed to query the LLM?",
-                "default": True
-            })
+            question = {"type": "confirm", "name": "confirm", "message": "Proceed to query the LLM?", "default": True}
+            result = prompt([question])
+            return result.get("confirm", False)
         except (InvalidArgument, IndexError, KeyError):
-            return False # User cancelled
+            return False
 
     def _prompt_for_action(self, summary):
         num_modified = len(summary.get("modified", []))
@@ -102,22 +82,42 @@ class ChatSession:
             console.print(f"   - Create {num_created} new file(s)")
 
         try:
-            question = {
-                "type": "list",
-                "message": "What would you like to do?",
-                "choices": [
-                    {"name": "[A]pply changes", "value": "apply"},
-                    {"name": "[D]isplay diff", "value": "diff"},
-                    {"name": "[S]ave response to file", "value": "save"},
-                    {"name": "[R]etry with new instructions", "value": "retry"},
-                    {"name": "[C]ancel", "value": "cancel"},
-                ],
-                "border": True,
-            }
-            # --- CORRECTION: list prompt returns the value directly ---
-            return prompt(question, vi_mode=True)
+            question = {"type": "list", "name": "action", "message": "What would you like to do?", "choices": [
+                {"name": "[A]pply changes", "value": "apply"},
+                {"name": "[D]isplay diff (Interactive)", "value": "diff"},
+                {"name": "[S]ave response to file", "value": "save"},
+                {"name": "[R]etry with new instructions", "value": "retry"},
+                {"name": "[C]ancel", "value": "cancel"},
+            ], "border": True}
+            result = prompt([question], vi_mode=True)
+            return result.get("action")
         except (InvalidArgument, IndexError, KeyError):
-            return "cancel" # User cancelled
+            return "cancel"
+
+    def _interactive_diff_viewer(self, llm_response: str):
+        """Creates a toggleable accordion-style menu to view diffs for each file."""
+        summary = summarize_changes(llm_response)
+        all_files = summary.get("modified", []) + summary.get("created", [])
+        
+        if not all_files:
+            console.print("No file changes detected in the response.", style="yellow")
+            return
+            
+        choices = [Path(f).as_posix() for f in all_files]
+        choices.append({"name": "--- [Done Reviewing] ---", "value": "done"})
+
+        while True:
+            question = {"type": "fuzzy", "name": "file", "message": "Select a file to view its diff (or select Done):", "choices": choices, "border": True}
+            result = prompt([question], vi_mode=True)
+            selected_file = result.get("file") if result else "done"
+
+            if selected_file == "done":
+                break
+                
+            console.print(f"\n--- Displaying diff for [bold]{selected_file}[/bold] ---")
+            diff_text = get_diff_for_file(selected_file, llm_response)
+            console.print(Panel(diff_text, title=f"[bold cyan]Diff: {Path(selected_file).name}[/bold cyan]", border_style="yellow", expand=True))
+            console.input("\n[grey50]Press Enter to continue...[/grey50]")
 
     def _select_and_build_context(self):
         """Handles the initial scope selection and context building for the original chat flow."""
@@ -159,17 +159,16 @@ class ChatSession:
                 paste_response(llm_response)
                 break
             elif action == "diff":
-                display_diff(llm_response)
-                # After showing diff, re-ask what to do.
+                self._interactive_diff_viewer(llm_response)
+                # After the user is done reviewing, re-ask what to do next.
                 nested_action = self._prompt_for_action(summary)
                 if nested_action == "apply":
                     paste_response(llm_response)
-                    break
-                elif nested_action == "retry":
-                    continue
-                else:
+                elif nested_action != "retry":
                     console.print("Cancelled.", style="yellow")
-                    break
+                # If they choose retry or cancel, the loop will handle it
+                if nested_action == "retry": continue
+                break # Exit after applying or cancelling
             elif action == "save":
                 Path("response.md").write_text(llm_response)
                 console.print("✅ Response saved to 'response.md'.", style="green")
