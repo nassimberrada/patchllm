@@ -33,11 +33,37 @@ class ChatSession:
         except (InvalidArgument, IndexError, KeyError):
             return None
 
-    def _prompt_for_task(self):
+    def _prompt_for_task(self, default: str = ""):
+        """Prompts for a task, allowing a default value to be pre-filled for editing."""
         try:
-            question = {"type": "input", "name": "task", "message": "What is your task?", "long_instruction": "You can press Enter to open your default editor for a longer message.", "multiline": True, "validate": EmptyInputValidator(), "border": True}
+            question = {
+                "type": "input", 
+                "name": "task", 
+                "message": "What is your task?", 
+                "long_instruction": "You can press Enter to open your default editor for a longer message.", 
+                "multiline": True, 
+                "validate": EmptyInputValidator(), 
+                "border": True,
+                "default": default
+            }
             result = prompt([question], vi_mode=True)
             return result.get("task")
+        except (InvalidArgument, IndexError, KeyError):
+            return None
+    
+    def _prompt_for_feedback(self):
+        """Asks the user for feedback on the previous LLM response."""
+        try:
+            question = {
+                "type": "input",
+                "name": "feedback",
+                "message": "What was wrong with the last response? (Optional, press Enter to skip)",
+                "long_instruction": "Provide feedback to guide the next attempt.",
+                "multiline": True,
+                "border": True,
+            }
+            result = prompt([question], vi_mode=True)
+            return result.get("feedback") if result else None
         except (InvalidArgument, IndexError, KeyError):
             return None
 
@@ -87,7 +113,7 @@ class ChatSession:
                 {"name": "[I]nteractively apply changes", "value": "interactive_apply"},
                 {"name": "[D]isplay diff (Interactive)", "value": "diff"},
                 {"name": "[S]ave response to file", "value": "save"},
-                {"name": "[R]etry with new instructions", "value": "retry"},
+                {"name": "[R]efine task & retry", "value": "retry"},
                 {"name": "[C]ancel", "value": "cancel"},
             ], "border": True}
             result = prompt([question], vi_mode=True)
@@ -158,16 +184,19 @@ class ChatSession:
             return
 
         task_prompt_method = task_prompt_method or self._prompt_for_task
+        task = ""
 
         while True:
-            task = task_prompt_method()
-            if not task:
-                console.print("Cancelled.", style="yellow")
-                break
+            if not task: # Only ask for a new task if the current one has been completed or cancelled
+                task = task_prompt_method()
+                if not task:
+                    console.print("Cancelled.", style="yellow")
+                    break
 
             if not self._confirm_proceed():
                 console.print("Cancelled.", style="yellow")
-                break
+                task = "" # Reset task so we ask for a new one
+                continue
 
             llm_response = run_llm_query(task, self.args.model, self.history, self.context)
 
@@ -190,7 +219,6 @@ class ChatSession:
                 break
             elif action == "diff":
                 self._interactive_diff_viewer(llm_response)
-                # After the user is done reviewing, re-ask what to do next.
                 nested_action = self._prompt_for_action(summary)
                 if nested_action == "apply":
                     paste_response(llm_response)
@@ -202,18 +230,40 @@ class ChatSession:
                          console.print("Cancelled.", style="yellow")
                 elif nested_action != "retry":
                     console.print("Cancelled.", style="yellow")
-                # If they choose retry or cancel, the loop will handle it
-                if nested_action == "retry": continue
-                break # Exit after applying or cancelling
-            elif action == "save":
+                if nested_action == "retry":
+                     # This will trigger the retry logic below
+                     action = "retry"
+                else:
+                    break # Exit after applying or cancelling
+            
+            if action == "save":
                 Path("response.md").write_text(llm_response)
                 console.print("✅ Response saved to 'response.md'.", style="green")
                 break
-            elif action == "retry":
-                continue
-            else: # cancel
-                console.print("Cancelled.", style="yellow")
-                break
+
+            if action == "retry":
+                # Remove the last user prompt and the failed assistant response from history
+                if len(self.history) >= 2:
+                    self.history.pop() # Assistant response
+                    self.history.pop() # User prompt
+
+                console.print("\n--- Refining Task ---", style="bold yellow")
+                feedback = self._prompt_for_feedback()
+                refined_task = self._prompt_for_task(default=task)
+
+                if not refined_task:
+                    console.print("Cancelled.", style="yellow")
+                    break
+                
+                task = refined_task
+                if feedback and feedback.strip():
+                    task = f"Feedback on previous attempt: {feedback}\n\n---\n\nMy refined task is:\n{refined_task}"
+                
+                continue # Loop back to query the LLM with the new task
+            
+            # If action is 'cancel' or another exit condition
+            console.print("Cancelled.", style="yellow")
+            break
 
     def start(self):
         """The original entry point for the `--chat` flag."""

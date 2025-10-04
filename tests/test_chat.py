@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 from pathlib import Path
 import os
 
@@ -9,7 +9,6 @@ from patchllm.cli.entrypoint import main
 from patchllm.chat.chat import ChatSession
 from patchllm.utils import load_from_py_file
 from patchllm.scopes.builder import build_context
-# --- MODIFICATION: Import the new selective paste function for patching ---
 from patchllm.parser import paste_response_selectively
 
 @pytest.fixture
@@ -84,26 +83,22 @@ def test_chat_session_diff_and_cancel(mock_prompts, mock_llm, temp_project, temp
     captured = capsys.readouterr()
     assert "Cancelled." in captured.out
 
-# --- NEW TEST CASE ---
 def test_chat_session_interactive_apply_flow(mock_prompts, mock_llm, temp_project, temp_scopes_file):
     main_py = temp_project / "main.py"
     utils_py = temp_project / "utils.py"
     main_py_original_content = main_py.read_text()
     utils_py_original_content = utils_py.read_text()
 
-    # Define the LLM response that modifies two files
     llm_response = (
         f"<file_path:{main_py.as_posix()}>\n```python\n# main.py updated\n```\n"
         f"<file_path:{utils_py.as_posix()}>\n```python\n# utils.py updated\n```"
     )
     mock_llm.return_value = llm_response
 
-    # Simulate the user's prompt journey
     mock_prompts.side_effect = [
         {"task": "update two files"},
         {"confirm": True},
         {"action": "interactive_apply"},
-        # This is the checkbox prompt: user selects ONLY main.py
         {"selected_files": [main_py.as_posix()]},
     ]
 
@@ -116,21 +111,66 @@ def test_chat_session_interactive_apply_flow(mock_prompts, mock_llm, temp_projec
     context_obj = build_context("base", scopes, Path(".").resolve())
     session.context = context_obj["context"]
 
-    # We patch the selective paste function directly to ensure it's called correctly
     with patch('patchllm.chat.chat.paste_response_selectively') as mock_paste:
         session.run_llm_interaction_loop()
-        
-        # Verify the selective paste function was called with the right arguments
         mock_paste.assert_called_once_with(llm_response, [main_py.as_posix()])
 
-    # To be absolutely sure, we can also test the underlying function
     paste_response_selectively(llm_response, [main_py.as_posix()])
 
-    # Assert that only the selected file was changed
     assert main_py.read_text() == "# main.py updated"
-    # Assert that the unselected file remains unchanged
     assert utils_py.read_text() == utils_py_original_content
     assert mock_prompts.call_count == 4
+
+def test_chat_session_refine_and_retry_flow(mock_prompts, mock_llm, temp_project, temp_scopes_file):
+    main_py = temp_project / "main.py"
+    initial_task = "add a function to main.py"
+    
+    # LLM gives a bad response first, then a good one
+    bad_response = f"<file_path:{main_py.as_posix()}>\n```python\n# some incorrect python code\n```"
+    good_response = f"<file_path:{main_py.as_posix()}>\n```python\n# the correct function\n```"
+    mock_llm.side_effect = [bad_response, good_response]
+
+    # Simulate the user's detailed interaction journey
+    mock_prompts.side_effect = [
+        {"task": initial_task},          # 1. Initial task
+        {"confirm": True},               # 2. Confirm 1st attempt
+        {"action": "retry"},             # 3. Choose to retry
+        {"feedback": "That was wrong."}, # 4. Provide feedback
+        {"task": "add a GOOD function"}, # 5. Refine the task (editing the default)
+        {"confirm": True},               # 6. Confirm 2nd attempt
+        {"action": "apply"},             # 7. Apply the good response
+    ]
+
+    os.chdir(temp_project)
+    args = MagicMock(scope='base', model='mock-model', interactive=False)
+    scopes = load_from_py_file(temp_scopes_file, "scopes")
+    
+    session = ChatSession(args, scopes, {})
+    context_obj = build_context("base", scopes, Path(".").resolve())
+    session.context = context_obj["context"]
+    
+    session.run_llm_interaction_loop()
+
+    # Verify the LLM was called twice
+    assert mock_llm.call_count == 2
+    
+    # Verify the prompts were all called
+    assert mock_prompts.call_count == 7
+
+    # Check that the second call to the LLM received the combined feedback and refined task
+    final_prompt_sent_to_llm = mock_llm.call_args_list[1].args[0]
+    assert "Feedback on previous attempt: That was wrong." in final_prompt_sent_to_llm
+    assert "My refined task is:\nadd a GOOD function" in final_prompt_sent_to_llm
+
+    # --- FIX ---
+    # Verify that the history for the second call was clean.
+    # The arguments to run_llm_query are (task, model, history, context).
+    # We must inspect args[2] for the history object.
+    history_for_second_call = mock_llm.call_args_list[1].args[2]
+    assert len(history_for_second_call) == 1 # Should only contain the system prompt
+    
+    # Verify the final file content is from the second, "good" response
+    assert main_py.read_text() == "# the correct function"
 
 
 def test_chat_flag_initiates_chat_flow(temp_project, temp_scopes_file):
