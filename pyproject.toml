@@ -30,6 +30,10 @@ voice = [
 url = [
     "html2text"
 ]
+interactive = [
+    "InquirerPy"
+]
+
 
 [tool.setuptools.packages.find]
 where = ["."]

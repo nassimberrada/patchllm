@@ -17,6 +17,7 @@ def listen(prompt=None, timeout=5):
             speak(prompt)
         console.print("🎙 Listening...", style="cyan")
         try:
+            recognizer.adjust_for_ambient_noise(source)
             audio = recognizer.listen(source, timeout=timeout)
             text = recognizer.recognize_google(audio)
             console.print(f"🗣 Recognized: {text}", style="cyan")
@@ -28,3 +29,9 @@ def listen(prompt=None, timeout=5):
         except sr.RequestError:
             speak("Speech recognition failed. Check your internet.")
     return None
+```<file_path:patchllm/__main__.py>
+```python
+from .cli.entrypoint import main
+
+if __name__ == "__main__":
+    main()

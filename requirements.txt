@@ -1,6 +1,7 @@
+html2text
+InquirerPy
 litellm
 python-dotenv
-SpeechRecognition
 pyttsx3
 rich
-html2text
+SpeechRecognition

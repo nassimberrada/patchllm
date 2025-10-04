@@ -9,23 +9,19 @@ def temp_project(tmp_path):
     project_dir = tmp_path / "test_project"
     project_dir.mkdir()
 
-    # Create some files
     (project_dir / "main.py").write_text("import utils\n\ndef hello():\n    print('hello')")
     (project_dir / "utils.py").write_text("def helper_function():\n    return 1")
     (project_dir / "README.md").write_text("# Test Project")
 
-    # Create a subdirectory
     src_dir = project_dir / "src"
     src_dir.mkdir()
     (src_dir / "component.js").write_text("console.log('component');")
     (src_dir / "styles.css").write_text("body { color: red; }")
 
-    # Create a test file
     tests_dir = project_dir / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_utils.py").write_text("from .. import utils\n\ndef test_helper():\n    assert utils.helper_function() == 1")
     
-    # Create a file with a common extension to be excluded
     (project_dir / "data.log").write_text("some log data")
 
     return project_dir
@@ -75,45 +71,28 @@ def mixed_project(tmp_path):
     (py_api_dir / "main.py").write_text(textwrap.dedent("""
         import os
         from .models import User
-
         class APIServer:
-            def start(self):
-                pass
-
+            def start(self): pass
         async def get_user(id: int) -> User:
-            # A comment that looks like a function def my_func()
+            # A comment
             return User()
         """))
     (py_api_dir / "models.py").write_text(textwrap.dedent("""
         from db import Base
-
-        class User(Base):
-            pass
+        class User(Base): pass
         """))
 
     js_src_dir = proj_dir / "frontend" / "src"
     js_src_dir.mkdir(parents=True)
     (js_src_dir / "index.js").write_text(textwrap.dedent("""
         import React from "react";
-        const { Component } = require("react");
-
-        export class App extends Component {
-            render() {
-                return <h1>Hello</h1>;
-            }
-        }
-
-        export const arrowFunc = () => {
-            console.log('test');
-        }
+        export class App extends React.Component { render() { return <h1>Hello</h1>; } }
+        export const arrowFunc = () => { console.log('test'); }
         """))
     (js_src_dir / "utils.ts").write_text(textwrap.dedent("""
-        export async function fetchData(url: string): Promise<any> {
-            // some implementation
-        }
+        export async function fetchData(url: string): Promise<any> { }
         """))
     
-    # Add a file that shouldn't be parsed
     (proj_dir / "README.md").write_text("# Mixed Project")
 
     return proj_dir
