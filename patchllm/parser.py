@@ -21,7 +21,7 @@ def _parse_file_blocks(response: str) -> list[tuple[Path, str]]:
     return parsed_blocks
 
 def paste_response(response: str):
-    """Applies the file updates from the LLM's response to the local filesystem."""
+    """Applies all file updates from the LLM's response to the local filesystem."""
     parsed_blocks = _parse_file_blocks(response)
     if not parsed_blocks:
         console.print("⚠️  Could not find any file blocks to apply in the response.", style="yellow")
@@ -34,6 +34,36 @@ def paste_response(response: str):
             console.print(f"✅ Updated [bold cyan]{file_path.name}[/bold cyan]", style="green")
         except Exception as e:
             console.print(f"❌ Failed to write to {file_path}: {e}", style="red")
+
+def paste_response_selectively(response: str, files_to_apply: list[str]):
+    """
+    Applies file updates from the LLM's response only to the user-selected files.
+
+    Args:
+        response (str): The full response from the LLM.
+        files_to_apply (list[str]): A list of absolute file path strings to modify.
+    """
+    parsed_blocks = _parse_file_blocks(response)
+    if not parsed_blocks:
+        console.print("⚠️  Could not find any file blocks to apply in the response.", style="yellow")
+        return
+
+    files_to_apply_set = set(files_to_apply)
+    applied_count = 0
+
+    for file_path, new_content in parsed_blocks:
+        if file_path.as_posix() in files_to_apply_set:
+            try:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                file_path.write_text(new_content, encoding="utf-8")
+                console.print(f"✅ Updated [bold cyan]{file_path.name}[/bold cyan]", style="green")
+                applied_count += 1
+            except Exception as e:
+                console.print(f"❌ Failed to write to {file_path}: {e}", style="red")
+
+    if applied_count == 0:
+        console.print("No changes were applied.", style="yellow")
+
 
 def summarize_changes(response: str) -> dict:
     """Summarizes which files will be created and which will be modified."""

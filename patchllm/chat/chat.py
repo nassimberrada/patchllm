@@ -7,7 +7,7 @@ from InquirerPy.validator import EmptyInputValidator
 from InquirerPy.exceptions import InvalidArgument
 
 from ..llm import run_llm_query
-from ..parser import paste_response, summarize_changes, get_diff_for_file
+from ..parser import paste_response, summarize_changes, get_diff_for_file, paste_response_selectively
 from ..cli.handlers import get_system_prompt, _collect_context
 
 console = Console()
@@ -83,7 +83,8 @@ class ChatSession:
 
         try:
             question = {"type": "list", "name": "action", "message": "What would you like to do?", "choices": [
-                {"name": "[A]pply changes", "value": "apply"},
+                {"name": "[A]pply all changes", "value": "apply"},
+                {"name": "[I]nteractively apply changes", "value": "interactive_apply"},
                 {"name": "[D]isplay diff (Interactive)", "value": "diff"},
                 {"name": "[S]ave response to file", "value": "save"},
                 {"name": "[R]etry with new instructions", "value": "retry"},
@@ -93,6 +94,28 @@ class ChatSession:
             return result.get("action")
         except (InvalidArgument, IndexError, KeyError):
             return "cancel"
+
+    def _prompt_for_files_to_apply(self, summary) -> list[str] | None:
+        """Shows a checkbox prompt for the user to select which files to apply changes to."""
+        all_files = sorted(summary.get("modified", []) + summary.get("created", []))
+        if not all_files:
+            console.print("No file changes were proposed by the LLM.", style="yellow")
+            return []
+
+        try:
+            question = {
+                "type": "checkbox",
+                "name": "selected_files",
+                "message": "Select which files to apply changes to:",
+                "choices": [{"name": Path(f).as_posix(), "value": f, "enabled": True} for f in all_files],
+                "transformer": lambda res: f"{len(res)} file(s) selected",
+                "border": True,
+                "cycle": False,
+            }
+            result = prompt([question], vi_mode=True)
+            return result.get("selected_files") if result else None
+        except (InvalidArgument, IndexError, KeyError):
+            return None
 
     def _interactive_diff_viewer(self, llm_response: str):
         """Creates a toggleable accordion-style menu to view diffs for each file."""
@@ -158,12 +181,25 @@ class ChatSession:
             if action == "apply":
                 paste_response(llm_response)
                 break
+            elif action == "interactive_apply":
+                files_to_apply = self._prompt_for_files_to_apply(summary)
+                if files_to_apply is not None:
+                    paste_response_selectively(llm_response, files_to_apply)
+                else:
+                    console.print("Cancelled.", style="yellow")
+                break
             elif action == "diff":
                 self._interactive_diff_viewer(llm_response)
                 # After the user is done reviewing, re-ask what to do next.
                 nested_action = self._prompt_for_action(summary)
                 if nested_action == "apply":
                     paste_response(llm_response)
+                elif nested_action == "interactive_apply":
+                    files_to_apply = self._prompt_for_files_to_apply(summary)
+                    if files_to_apply is not None:
+                         paste_response_selectively(llm_response, files_to_apply)
+                    else:
+                         console.print("Cancelled.", style="yellow")
                 elif nested_action != "retry":
                     console.print("Cancelled.", style="yellow")
                 # If they choose retry or cancel, the loop will handle it
