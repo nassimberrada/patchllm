@@ -109,14 +109,92 @@ def test_wizard_scope_management_flow(mock_wizard_prompts, temp_scopes_file, cap
         {"action": "exit"},
     ]
 
-    with patch.dict('os.environ', {'PATCHLLM_SCOPES_FILE': temp_scopes_file.as_posix()}):
-        with patch.object(sys, 'argv', ['patchllm']):
-            main()
+    # This test now uses `console.input` which needs to be handled if it blocks.
+    # We patch it to immediately return, allowing the test to proceed.
+    with patch('rich.console.Console.input'):
+        with patch.dict('os.environ', {'PATCHLLM_SCOPES_FILE': temp_scopes_file.as_posix()}):
+            with patch.object(sys, 'argv', ['patchllm']):
+                main()
 
     captured = capsys.readouterr()
     assert "Available scopes" in captured.out
     assert "base" in captured.out
     assert "js_and_css" in captured.out
+
+def test_wizard_scope_management_loop(mock_wizard_prompts, temp_scopes_file, capsys):
+    """
+    Tests that the scope management menu loops correctly, allowing multiple actions.
+    """
+    mock_wizard_prompts.side_effect = [
+        # 1. Main menu -> Manage scopes
+        {"action": "manage_scopes"},
+        # 2. Scope Menu -> Add a scope
+        {"action": "Add a scope"},
+        {"scope": "my_new_scope"}, # Prompt for scope name
+        # 3. Scope Menu -> List scopes (looping back)
+        {"action": "List scopes"},
+        # 4. Scope Menu -> Back to main menu
+        {"action": "back"},
+        # 5. Main menu -> Exit
+        {"action": "exit"},
+    ]
+
+    # Patch console.input to prevent test from blocking
+    with patch('rich.console.Console.input'):
+        with patch.dict('os.environ', {'PATCHLLM_SCOPES_FILE': temp_scopes_file.as_posix()}):
+            with patch.object(sys, 'argv', ['patchllm']):
+                main()
+
+    # Check that the file was actually written to
+    updated_scopes = load_from_py_file(temp_scopes_file, "scopes")
+    assert "my_new_scope" in updated_scopes
+
+    # Check the output to see if both actions were logged
+    captured = capsys.readouterr()
+    assert "Scope 'my_new_scope' added." in captured.out
+    assert "my_new_scope" in captured.out # From the list command
+    # Verify we see the scope management menu prompt text multiple times
+    assert mock_wizard_prompts.call_args_list[1].args[0][0]['message'] == "Scope Management"
+    assert mock_wizard_prompts.call_args_list[3].args[0][0]['message'] == "Scope Management"
+
+
+def test_wizard_dynamic_scope_selection_flow(mock_wizard_prompts, temp_project, capsys):
+    """
+    Tests the new interactive selection flow for dynamic scopes, using '@search'.
+    """
+    mock_wizard_prompts.side_effect = [
+        # 1. Main menu -> New Task
+        {"action": "new_task"},
+        # 2. Context Source -> Dynamic
+        {"source": "dynamic"},
+        # 3. Dynamic Type -> @search
+        {"scope_type": "search"},
+        # 4. Prompt for search term
+        {"term": "hello"},
+        # 5. Refine context -> Proceed
+        {"action": "Proceed"},
+        # 6. Final context action -> Back to main menu
+        {"action": "back"},
+        # 7. Main menu -> Exit
+        {"action": "exit"},
+    ]
+    
+    scopes_file = temp_project / "scopes.py"
+    scopes_file.write_text("scopes = {}")
+
+    os.chdir(temp_project)
+    with patch.dict('os.environ', {'PATCHLLM_SCOPES_FILE': scopes_file.as_posix()}):
+        with patch.object(sys, 'argv', ['patchllm']):
+            main()
+
+    # Assert that the context summary was built correctly based on the search
+    captured = capsys.readouterr()
+    assert "main.py" in captured.out # Contains 'hello'
+    assert "utils.py" not in captured.out # Does not contain 'hello'
+    
+    # Verify the correct interactive prompts were shown
+    assert mock_wizard_prompts.call_args_list[2].args[0][0]['message'] == "Select a dynamic scope type:"
+    assert mock_wizard_prompts.call_args_list[3].args[0][0]['message'] == "Enter keyword to search for:"
 
 # --- MODIFICATION: New test for the external patch flow ---
 @pytest.mark.skipif(pyperclip is None, reason="pyperclip is not installed")

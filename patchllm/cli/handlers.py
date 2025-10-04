@@ -2,6 +2,7 @@ import pprint
 import ast
 import textwrap
 import re
+import argparse
 from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
@@ -9,11 +10,13 @@ from rich.panel import Panel
 from ..utils import write_scopes_to_file
 from ..parser import paste_response
 from ..patcher import apply_external_patch
-from ..scopes.builder import build_context, build_context_from_files, helpers
+from ..scopes.builder import build_context_from_files, helpers
 from ..llm import run_llm_query
+from .helpers import get_system_prompt, _collect_context
 
 from InquirerPy import prompt
 from InquirerPy.exceptions import InvalidArgument
+from InquirerPy.validator import EmptyInputValidator
 
 console = Console()
 
@@ -99,56 +102,6 @@ def handle_file_io(args):
     if content_to_patch:
         base_path = Path(".").resolve()
         apply_external_patch(content_to_patch, base_path)
-
-def _collect_context(args, scopes):
-    """Helper to determine and build the context from args."""
-    base_path = Path(".").resolve()
-    context_object = None
-
-    if args.interactive:
-        try:
-            from ..interactive.selector import select_files_interactively
-            selected_files = select_files_interactively(base_path)
-            if selected_files:
-                context_object = build_context_from_files(selected_files, base_path)
-        except ImportError:
-            console.print("❌ 'InquirerPy' is required for interactive mode.", style="red")
-            console.print("   Install it with: pip install 'patchllm[interactive]'", style="cyan")
-            return None
-    elif args.scope:
-        context_object = build_context(args.scope, scopes, base_path)
-
-    if context_object:
-        tree = context_object.get("tree", "")
-        console.print("\n--- Context Summary ---", style="bold")
-        console.print(tree)
-        
-        return context_object
-    
-    if any([args.interactive, args.scope]):
-        console.print("--- Context building failed or returned no files. ---", style="yellow")
-    return None
-
-def get_system_prompt():
-    """Returns the system prompt for the LLM."""
-    return textwrap.dedent("""
-        You are an expert pair programmer. Your purpose is to help users by modifying files based on their instructions.
-        Follow these rules strictly:
-        Your output should be a single file including all the updated files. For each file-block:
-        1. Only include code for files that need to be updated / edited.
-        2. For updated files, do not exclude any code even if it is unchanged code; assume the file code will be copy-pasted full in the file.
-        3. Do not include verbose inline comments explaining what every small change does. Try to keep comments concise but informative, if any.
-        4. Only update the relevant parts of each file relative to the provided task; do not make irrelevant edits even if you notice areas of improvements elsewhere.
-        5. Do not use diffs.
-        6. Make sure each file-block is returned in the following exact format. No additional text, comments, or explanations should be outside these blocks.
-        Expected format for a modified or new file:
-        <file_path:/absolute/path/to/your/file.py>
-        ```python
-        # The full, complete content of /absolute/path/to/your/file.py goes here.
-        def example_function():
-            return "Hello, World!"
-        ```
-    """)
 
 def handle_main_task_flow(args, scopes, recipes, parser):
     """Handles the primary workflow of building context and querying the LLM."""
@@ -278,37 +231,59 @@ def _wizard_main_menu():
 
 def _wizard_manage_scopes(args, scopes, scopes_file_path, parser):
     """Interactive sub-menu for managing scopes within the wizard."""
-    try:
-        question = {
-            "type": "list", "name": "action", "message": "Scope Management",
-            "choices": ["List scopes", "Show a scope", "Add a scope", "Remove a scope", {"name": "Back to main menu", "value": "back"}],
-            "border": True,
-        }
-        result = prompt([question])
-        action = result.get("action") if result else "back"
+    while True:
+        try:
+            # Create a fresh, temporary args object for each action to avoid state pollution.
+            action_args = argparse.Namespace(list_scopes=False, show_scope=None, add_scope=None, remove_scope=None, update_scope=None)
 
-        if action == "List scopes":
-            args.list_scopes = True
-        elif action == "Show a scope":
-            scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to show?", "choices": sorted(scopes.keys())}
-            scope_r = prompt([scope_q])
-            if scope_r: args.show_scope = scope_r.get("scope")
-        elif action == "Add a scope":
-            scope_q = {"type": "input", "name": "scope", "message": "Name for the new scope:"}
-            scope_r = prompt([scope_q])
-            if scope_r: args.add_scope = scope_r.get("scope")
-        elif action == "Remove a scope":
-            scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to remove?", "choices": sorted(scopes.keys())}
-            scope_r = prompt([scope_q])
-            if scope_r: args.remove_scope = scope_r.get("scope")
-        elif action == "back":
+            question = {
+                "type": "list", "name": "action", "message": "Scope Management",
+                "choices": ["List scopes", "Show a scope", "Add a scope", "Remove a scope", {"name": "Back to main menu", "value": "back"}],
+                "border": True,
+            }
+            result = prompt([question])
+            action = result.get("action") if result else "back"
+
+            if action == "back" or action is None:
+                return
+
+            if action == "List scopes":
+                action_args.list_scopes = True
+            elif action == "Show a scope":
+                if not scopes:
+                    console.print("⚠️ No scopes found to show.", style="yellow")
+                    console.input("\n[grey50]Press Enter to continue...[/grey50]")
+                    continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to show?", "choices": sorted(scopes.keys())}
+                scope_r = prompt([scope_q])
+                if scope_r and scope_r.get("scope"):
+                    action_args.show_scope = scope_r.get("scope")
+                else:
+                    continue
+            elif action == "Add a scope":
+                scope_q = {"type": "input", "name": "scope", "message": "Name for the new scope:", "validate": EmptyInputValidator()}
+                scope_r = prompt([scope_q])
+                if scope_r and scope_r.get("scope"):
+                     action_args.add_scope = scope_r.get("scope")
+                else:
+                    continue
+            elif action == "Remove a scope":
+                if not scopes:
+                    console.print("⚠️ No scopes found to remove.", style="yellow")
+                    console.input("\n[grey50]Press Enter to continue...[/grey50]")
+                    continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to remove?", "choices": sorted(scopes.keys())}
+                scope_r = prompt([scope_q])
+                if scope_r and scope_r.get("scope"):
+                    action_args.remove_scope = scope_r.get("scope")
+                else:
+                    continue
+
+            handle_scope_management(action_args, scopes, scopes_file_path, parser)
+            console.input("\n[grey50]Press Enter to continue...[/grey50]")
+
+        except (InvalidArgument, IndexError, KeyError, TypeError):
             return
-
-        if any([args.list_scopes, args.show_scope, args.add_scope, args.remove_scope]):
-            handle_scope_management(args, scopes, scopes_file_path, parser)
-
-    except (InvalidArgument, IndexError, KeyError, TypeError):
-        return
 
 def _wizard_select_context_source(args, scopes):
     """Step 1: Asks the user how they want to build the context."""
@@ -318,7 +293,7 @@ def _wizard_select_context_source(args, scopes):
             "message": "How would you like to build the context?",
             "choices": [
                 {"name": "Select from a list of saved scopes", "value": "saved"},
-                {"name": "Enter a dynamic scope (e.g., @git:staged)", "value": "dynamic"},
+                {"name": "Use a dynamic scope (e.g., @git:staged, @search)", "value": "dynamic"},
                 {"name": "Interactively select files/folders", "value": "interactive"},
                 {"name": "Import from a context file", "value": "file"},
             ], "border": True,
@@ -339,9 +314,51 @@ def _wizard_select_context_source(args, scopes):
             return _collect_context(args, scopes)
             
         elif source == "dynamic":
-            scope_question = {"type": "input", "name": "scope", "message": "Enter dynamic scope:"}
+            dynamic_choices = [
+                {"name": "@git:staged - Files staged for commit", "value": "@git:staged"},
+                {"name": "@git:unstaged - Files with uncommitted changes", "value": "@git:unstaged"},
+                {"name": "@git:lastcommit - Files from the last commit", "value": "@git:lastcommit"},
+                {"name": "@git:conflicts - Files with merge conflicts", "value": "@git:conflicts"},
+                {"name": "@git:branch - Files changed in current branch vs. a base branch", "value": "git_branch"},
+                {"name": "@recent - Recently modified files", "value": "@recent"},
+                {"name": "@structure - High-level project structure overview", "value": "@structure"},
+                {"name": "@dir - All files within a specific directory", "value": "dir"},
+                {"name": "@related - Find files related to a specific file", "value": "related"},
+                {"name": "@search - Find files containing a keyword", "value": "search"},
+            ]
+            scope_question = {"type": "list", "name": "scope_type", "message": "Select a dynamic scope type:", "choices": dynamic_choices, "border": True}
             scope_result = prompt([scope_question])
-            scope_name = scope_result.get("scope") if scope_result else None
+            scope_type = scope_result.get("scope_type") if scope_result else None
+            
+            if not scope_type: return None
+
+            scope_name = None
+            if scope_type in ["@git:staged", "@git:unstaged", "@git:lastcommit", "@git:conflicts", "@recent", "@structure"]:
+                scope_name = scope_type
+            elif scope_type == "git_branch":
+                branch_q = {"type": "input", "name": "branch", "message": "Enter base branch to compare against (e.g., main, develop):", "default": "main"}
+                branch_r = prompt([branch_q])
+                base_branch = branch_r.get("branch") if branch_r else "main"
+                scope_name = f"@git:branch:{base_branch}"
+            elif scope_type == "dir":
+                dir_q = {"type": "input", "name": "dir", "message": "Enter directory path relative to project root:", "validate": EmptyInputValidator()}
+                dir_r = prompt([dir_q])
+                dir_path = dir_r.get("dir") if dir_r else None
+                if not dir_path: return None
+                scope_name = f"@dir:{dir_path}"
+            elif scope_type == "related":
+                file_q = {"type": "input", "name": "file", "message": "Enter file path to find related files for:", "validate": EmptyInputValidator()}
+                file_r = prompt([file_q])
+                file_path = file_r.get("file") if file_r else None
+                if not file_path: return None
+                scope_name = f"@related:{file_path}"
+            elif scope_type == "search":
+                search_q = {"type": "input", "name": "term", "message": "Enter keyword to search for:", "validate": EmptyInputValidator()}
+                search_r = prompt([search_q])
+                search_term = search_r.get("term") if search_r else None
+                if not search_term: return None
+                scope_name = f'@search:"{search_term}"'
+
             if not scope_name: return None
             args.scope = scope_name
             return _collect_context(args, scopes)

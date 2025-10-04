@@ -8,7 +8,7 @@ from InquirerPy.exceptions import InvalidArgument
 
 from ..llm import run_llm_query
 from ..parser import paste_response, summarize_changes, get_diff_for_file, paste_response_selectively
-from ..cli.handlers import get_system_prompt, _collect_context
+from ..cli.helpers import get_system_prompt, _collect_context
 
 console = Console()
 
