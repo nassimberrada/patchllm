@@ -12,9 +12,10 @@ from ..parser import paste_response, summarize_changes, display_diff
 console = Console()
 
 class ChatSession:
-    def __init__(self, args, scopes):
+    def __init__(self, args, scopes, recipes):
         self.args = args
         self.scopes = scopes
+        self.recipes = recipes
         self.history = [{"role": "system", "content": get_system_prompt()}]
         self.context = None
 

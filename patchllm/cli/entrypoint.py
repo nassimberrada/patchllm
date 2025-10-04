@@ -18,6 +18,7 @@ def main():
     load_dotenv()
     
     scopes_file_path = os.getenv("PATCHLLM_SCOPES_FILE", "./scopes.py")
+    recipes_file_path = os.getenv("PATCHLLM_RECIPES_FILE", "./recipes.py")
 
     parser = argparse.ArgumentParser(
         description="A CLI tool to apply code changes using an LLM.",
@@ -45,6 +46,10 @@ def main():
                  @git:lastcommit, @git:conflicts, @recent, @dir:<path>, 
                  @related:<file>, @search:"<term>", @error:"<traceback>"
         """))
+    patch_group.add_argument(
+        "-r", "--recipe", type=str, default=None,
+        help="Name of the recipe to use from your 'recipes.py' file."
+    )
     patch_group.add_argument("-t", "--task", type=str, help="The task instructions for the assistant.")
     patch_group.add_argument("-p", "--patch", action="store_true", help="Query the LLM and apply file updates.")
 
@@ -82,8 +87,18 @@ def main():
         console.print(f"❌ Error loading scopes file: {e}", style="red")
         return
 
+    try:
+        recipes = load_from_py_file(recipes_file_path, "recipes")
+    except FileNotFoundError:
+        recipes = {}
+        if args.recipe:
+            console.print(f"⚠️  Recipes file '{recipes_file_path}' not found, but a recipe was requested.", style="yellow")
+    except Exception as e:
+        console.print(f"❌ Error loading recipes file: {e}", style="red")
+        return
+
     if args.chat:
-        handle_chat_flow(args, scopes)
+        handle_chat_flow(args, scopes, recipes)
         return
 
     if any([args.list_scopes, args.show_scope, args.add_scope, args.remove_scope, args.update_scope]):
@@ -98,4 +113,4 @@ def main():
         handle_voice_flow(args, scopes, parser)
         return
 
-    handle_main_task_flow(args, scopes, parser)
+    handle_main_task_flow(args, scopes, recipes, parser)

@@ -136,11 +136,20 @@ def get_system_prompt():
         ```
     """)
 
-def handle_main_task_flow(args, scopes, parser):
+def handle_main_task_flow(args, scopes, recipes, parser):
     """Handles the primary workflow of building context and querying the LLM."""
     system_prompt = get_system_prompt()
     history = [{"role": "system", "content": system_prompt}]
     
+    task = args.task
+    if args.recipe:
+        if args.task:
+            console.print(f"⚠️ Both --task and --recipe provided. Using explicit --task.", style="yellow")
+        else:
+            task = recipes.get(args.recipe)
+            if not task:
+                parser.error(f"Recipe '{args.recipe}' not found in recipes file.")
+
     context = None
     if args.context_in:
         context = Path(args.context_in).read_text()
@@ -149,8 +158,8 @@ def handle_main_task_flow(args, scopes, parser):
         if context is None and not args.guidelines:
              if any([args.scope, args.interactive]):
                  return # Exit if context building failed
-             if args.task:
-                 parser.error("A scope (-s), interactive (-in), or context-in (-ci) is required for a task.")
+             if task:
+                 parser.error("A scope (-s), interactive (-in), or context-in (-ci) is required for a task or recipe.")
 
     if args.guidelines:
         guidelines_content = system_prompt if args.guidelines is True else args.guidelines
@@ -159,17 +168,17 @@ def handle_main_task_flow(args, scopes, parser):
     if args.context_out and context:
         Path(args.context_out).write_text(context)
 
-    if args.task:
+    if task:
         action_flags = [args.patch, args.to_file is not None, args.to_clipboard]
         if sum(action_flags) > 1:
             parser.error("Please specify only one action: --patch, --to-file, or --to-clipboard.")
         if sum(action_flags) == 0:
-            parser.error("A task was provided, but no action was specified.")
+            parser.error("A task or recipe was provided, but no action was specified (e.g., --patch).")
 
         if not context:
             console.print("Proceeding with task but without any file context.", style="yellow")
 
-        llm_response = run_llm_query(args.task, args.model, history, context)
+        llm_response = run_llm_query(task, args.model, history, context)
         
         if llm_response:
             if args.patch:
@@ -217,11 +226,11 @@ def handle_voice_flow(args, scopes, parser):
     else:
         speak("Cancelled.")
 
-def handle_chat_flow(args, scopes):
+def handle_chat_flow(args, scopes, recipes):
     """Handles the interactive chat workflow."""
     try:
         from ..chat.chat import ChatSession
-        session = ChatSession(args, scopes)
+        session = ChatSession(args, scopes, recipes)
         session.start()
     except ImportError:
         console.print("❌ 'InquirerPy' is required for chat mode.", style="red")

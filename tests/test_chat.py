@@ -45,7 +45,8 @@ def test_chat_session_full_flow(mock_prompts, mock_llm, temp_project, temp_scope
         # CORRECTED: Added interactive=False to prevent ambiguity
         args = MagicMock(scope=None, model='mock-model', interactive=False)
         scopes = load_from_py_file(temp_scopes_file, "scopes")
-        session = ChatSession(args, scopes)
+        # FIX: Added the missing 'recipes' argument, passing an empty dict.
+        session = ChatSession(args, scopes, {})
         session.start()
 
     # --- Assertions ---
@@ -81,7 +82,8 @@ def test_chat_session_diff_and_cancel(mock_prompts, mock_llm, temp_project, temp
         # CORRECTED: Added interactive=False
         args = MagicMock(scope=None, model='mock-model', interactive=False)
         scopes = load_from_py_file(temp_scopes_file, "scopes")
-        session = ChatSession(args, scopes)
+        # FIX: Added the missing 'recipes' argument, passing an empty dict.
+        session = ChatSession(args, scopes, {})
         session.start()
 
     # --- Assertions ---
