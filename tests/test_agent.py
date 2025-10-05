@@ -11,9 +11,40 @@ from patchllm.utils import load_from_py_file
 def mock_args():
     # Use a real object that can have attributes set
     class MockArgs:
-        def __init__(self, model):
+        def __init__(self, model="default-model"):
             self.model = model
-    return MockArgs(model="default-model")
+    return MockArgs()
+
+def test_session_ask_about_plan(mock_args):
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.plan = ["step 1"]
+    session.planning_history = [{"role": "system", "content": "You are a planner."}]
+    
+    # --- FIX: Patch run_llm_query where it is defined and imported FROM, not where it is USED ---
+    with patch('patchllm.llm.run_llm_query') as mock_llm:
+        mock_llm.return_value = "This is the answer."
+        response = session.ask_about_plan("Why step 1?")
+        
+        assert response == "This is the answer."
+        assert len(session.planning_history) == 3
+        assert session.planning_history[-2]['content'] == "Why step 1?"
+        assert session.planning_history[-1]['content'] == "This is the answer."
+        # Crucially, the plan should not have changed
+        assert session.plan == ["step 1"]
+
+def test_session_refine_plan(mock_args):
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.plan = ["old step 1"]
+    session.planning_history = [{"role": "system", "content": "Planner"}]
+    
+    with patch('patchllm.agent.planner.generate_refined_plan') as mock_refiner:
+        mock_refiner.return_value = "1. new step 1\n2. new step 2"
+        success = session.refine_plan("Please add another step.")
+
+        assert success is True
+        assert session.plan == ["new step 1", "new step 2"]
+        assert len(session.planning_history) == 3
+        mock_refiner.assert_called_once()
 
 def test_session_load_and_save_settings(mock_args, tmp_path):
     os.chdir(tmp_path)

@@ -28,6 +28,8 @@ def _print_help():
     help_text.append("Agent Workflow:\n", style="bold cyan")
     help_text.append("  /task <goal>", style="bold"); help_text.append("\n    ↳ Sets the high-level goal.\n")
     help_text.append("  /plan", style="bold"); help_text.append("\n    ↳ Generates a plan to achieve the goal.\n")
+    help_text.append("  /ask <question>", style="bold"); help_text.append("\n    ↳ Ask a question about the current plan.\n")
+    help_text.append("  /refine <feedback>", style="bold"); help_text.append("\n    ↳ Refine the plan with new feedback/ideas.\n")
     help_text.append("  /plan --edit <N> <text>", style="bold"); help_text.append("\n    ↳ Edits step N of the plan.\n")
     help_text.append("  /plan --rm <N>", style="bold"); help_text.append("\n    ↳ Removes step N from the plan.\n")
     help_text.append("  /plan --add <text>", style="bold"); help_text.append("\n    ↳ Adds a new step to the end of the plan.\n")
@@ -198,7 +200,7 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             except Exception as e: console.print(f"⚠️ Could not resume session: {e}", style="yellow"); _clear_session()
         else: _clear_session()
 
-    completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff", "/skip", "/settings"], scopes=session.scopes)
+    completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff", "/skip", "/settings", "/ask", "/refine"], scopes=session.scopes)
     prompt_session = PromptSession(history=FileHistory(Path("~/.patchllm_history").expanduser()))
 
     console.print("🤖 Welcome to the PatchLLM Agent. Type `/` and [TAB] for commands. `/exit` to quit.", style="bold blue")
@@ -215,6 +217,24 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             elif command == '/help': console.print(_print_help())
             elif command == '/task':
                 session.set_goal(arg_string); console.print("✅ Goal set.", style="green"); _save_session(session)
+            
+            elif command == '/ask':
+                if not session.plan: console.print("❌ No plan to ask about. Generate one with `/plan` first.", style="red"); continue
+                if not arg_string: console.print("❌ Please provide a question.", style="red"); continue
+                with console.status("[cyan]Asking assistant..."): response = session.ask_about_plan(arg_string)
+                if response:
+                    console.print(Panel(response, title="Assistant's Answer", border_style="blue"))
+                else: console.print("❌ Failed to get a response.", style="red")
+
+            elif command == '/refine':
+                if not session.plan: console.print("❌ No plan to refine. Generate one with `/plan` first.", style="red"); continue
+                if not arg_string: console.print("❌ Please provide feedback or an idea.", style="red"); continue
+                with console.status("[cyan]Refining plan..."): success = session.refine_plan(arg_string)
+                if success:
+                    console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Refined Execution Plan", border_style="magenta"))
+                    _save_session(session)
+                else: console.print("❌ Failed to refine the plan.", style="red")
+
             elif command == '/plan':
                 if not arg_string:
                     if not session.goal: console.print("❌ No goal set.", style="red"); continue

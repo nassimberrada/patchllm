@@ -19,6 +19,7 @@ class AgentSession:
         self.context: str | None = None
         self.context_files: list[Path] = []
         self.history: list[dict] = [{"role": "system", "content": get_system_prompt()}]
+        self.planning_history: list[dict] = []
         self.scopes = scopes
         self.recipes = recipes
         self.last_execution_result: dict | None = None
@@ -54,6 +55,7 @@ class AgentSession:
             "plan": self.plan,
             "current_step": self.current_step,
             "context_files": [p.as_posix() for p in self.context_files],
+            # Note: We don't save planning_history to keep sessions clean.
         }
 
     def from_dict(self, data: dict):
@@ -70,6 +72,7 @@ class AgentSession:
         self.goal = goal
         self.plan = []
         self.current_step = 0
+        self.planning_history = [] # Reset planning chat on new goal
 
     def edit_plan_step(self, step_number: int, new_instruction: str) -> bool:
         """Edits an instruction in the current plan."""
@@ -103,18 +106,50 @@ class AgentSession:
         return False
 
     def create_plan(self) -> bool:
-        # --- FIX: Moved imports inside the method ---
         from ..scopes.builder import helpers
         from . import planner
         
         if not self.goal: return False
         context_tree = helpers.generate_source_tree(Path(".").resolve(), self.context_files)
-        plan = planner.generate_plan(self.goal, context_tree, self.args.model)
-        if plan: self.plan = plan; return True
+        
+        # This initializes the planning conversation
+        self.planning_history, plan_response = planner.generate_plan_and_history(self.goal, context_tree, self.args.model)
+        
+        if plan_response:
+            parsed_plan = planner.parse_plan_from_response(plan_response)
+            if parsed_plan:
+                self.plan = parsed_plan
+                return True
+        return False
+
+    def ask_about_plan(self, question: str) -> str | None:
+        """Asks a clarifying question about the plan without changing it."""
+        from ..llm import run_llm_query
+
+        self.planning_history.append({"role": "user", "content": question})
+        response = run_llm_query(self.planning_history, self.args.model)
+        if response:
+            self.planning_history.append({"role": "assistant", "content": response})
+        else:
+            self.planning_history.pop() # Remove the user's question if the query failed
+        return response
+
+    def refine_plan(self, feedback: str) -> bool:
+        """Refines the existing plan based on user feedback."""
+        from . import planner
+
+        new_plan_response = planner.generate_refined_plan(self.planning_history, feedback, self.args.model)
+        if new_plan_response:
+            parsed_plan = planner.parse_plan_from_response(new_plan_response)
+            if parsed_plan:
+                # Update history with the latest exchange
+                self.planning_history.append({"role": "user", "content": feedback})
+                self.planning_history.append({"role": "assistant", "content": new_plan_response})
+                self.plan = parsed_plan
+                return True
         return False
 
     def run_current_step(self, instruction_override: str | None = None) -> dict | None:
-        # --- FIX: Moved import inside the method ---
         from . import executor
         
         if not self.plan or self.current_step >= len(self.plan): return None
@@ -124,7 +159,6 @@ class AgentSession:
         return result
 
     def approve_changes(self) -> bool:
-        # --- FIX: Moved import inside the method ---
         from ..parser import paste_response
         
         if not self.last_execution_result: return False
@@ -147,7 +181,6 @@ class AgentSession:
         return self.run_current_step(instruction_override=refined_instruction)
 
     def reload_scopes(self, scopes_file_path: str):
-        # --- FIX: Moved import inside the method ---
         from ..utils import load_from_py_file
         
         try:
@@ -158,7 +191,6 @@ class AgentSession:
             print(f"Warning: Could not reload scopes file: {e}")
 
     def load_context_from_scope(self, scope_name: str) -> str:
-        # --- FIX: Moved import inside the method ---
         from ..scopes.builder import build_context
         
         context_object = build_context(scope_name, self.scopes, Path(".").resolve())
@@ -170,7 +202,6 @@ class AgentSession:
         return f"⚠️  Could not build context for scope '{scope_name}'. No files found."
 
     def add_files_and_rebuild_context(self, new_files: list[Path]) -> str:
-        # --- FIX: Moved import inside the method ---
         from ..scopes.builder import build_context_from_files
         
         current_files_set = set(self.context_files)
@@ -183,7 +214,6 @@ class AgentSession:
         return "⚠️  Failed to rebuild context with new files."
 
     def add_context_from_scope(self, scope_name: str) -> str:
-        # --- FIX: Moved import inside the method ---
         from ..scopes.builder import build_context
         
         context_object = build_context(scope_name, self.scopes, Path(".").resolve())
