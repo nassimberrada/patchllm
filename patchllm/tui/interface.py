@@ -37,18 +37,17 @@ def _print_help():
     help_text.append("  /skip", style="bold"); help_text.append("\n    ↳ Skips the current step.\n")
     help_text.append("  /diff [all|filename]", style="bold"); help_text.append("\n    ↳ Shows the full diff for a file or all files.\n")
     help_text.append("  /approve", style="bold"); help_text.append("\n    ↳ Applies the changes from the last run.\n")
-    help_text.append("  /retry <feedback>", style="bold"); help_text.append("\n    ↳ Retries the last step with new feedback.\n\n")
+    help_text.append("  /retry <feedback>", style="bold"); help_text.append("\n    ↳ Retries the last step with new feedback.\n")
+    help_text.append("  /revert", style="bold"); help_text.append("\n    ↳ Reverts the changes from the last /approve.\n\n")
     help_text.append("Context Management:\n", style="bold cyan")
     help_text.append("  /context <scope>\n", style="bold"); help_text.append("    ↳ Replaces context with a scope.\n")
     help_text.append("  /add_context <scope>\n", style="bold"); help_text.append("    ↳ Adds files from a scope to context.\n")
     help_text.append("  /add_context --interactive\n", style="bold"); help_text.append("    ↳ Use fuzzy finder to add files.\n")
     help_text.append("  /clear_context\n", style="bold"); help_text.append("    ↳ Empties the context.\n")
     help_text.append("  /scopes\n", style="bold"); help_text.append("        ↳ Enter the scope management menu.\n\n")
-    help_text.append("Utilities:\n", style="bold cyan")
-    help_text.append("  /test\n", style="bold"); help_text.append("          ↳ Run pytest to check for regressions.\n")
-    help_text.append("  /stage\n", style="bold"); help_text.append("         ↳ Stage all current changes with git.\n\n")
     help_text.append("General:\n", style="bold cyan")
     help_text.append("  /settings\n", style="bold"); help_text.append("      ↳ Configure the model and API keys.\n")
+    help_text.append("  /history\n", style="bold"); help_text.append("       ↳ Shows the history of actions for this session.\n")
     help_text.append("  /help\n", style="bold"); help_text.append("          ↳ Shows this help message.\n")
     help_text.append("  /exit\n", style="bold"); help_text.append("          ↳ Exits the agent session.\n")
     return Panel(help_text, title="Help", border_style="green")
@@ -210,7 +209,8 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             completer.set_session_state(
                 has_goal=bool(session.goal),
                 has_plan=bool(session.plan),
-                has_pending_changes=bool(session.last_execution_result)
+                has_pending_changes=bool(session.last_execution_result),
+                can_revert=bool(session.last_revert_state)
             )
             
             text = prompt_session.prompt(">>> ", completer=FuzzyCompleter(completer)).strip()
@@ -310,6 +310,21 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 with console.status("[cyan]Agent is working..."): result = session.retry_step(arg_string)
                 _display_execution_summary(result, console)
 
+            elif command == '/revert':
+                if not session.last_revert_state: console.print("❌ No approved changes to revert.", style="red"); continue
+                with console.status("[cyan]Reverting changes..."): success = session.revert_last_approval()
+                if success:
+                    console.print("✅ Last approved changes have been reverted.", style="green"); _save_session(session)
+                else: console.print("❌ Failed to revert changes.", style="red")
+
+            elif command == '/history':
+                if not session.action_history:
+                    console.print("No actions recorded in this session yet.", style="yellow"); continue
+                history_text = Text()
+                for i, entry in enumerate(session.action_history):
+                    history_text.append(f"{i+1}. {escape(entry)}\n")
+                console.print(Panel(history_text, title="Session History", border_style="blue"))
+
             elif command == '/context':
                 with console.status("[cyan]Building..."): summary = session.load_context_from_scope(arg_string)
                 console.print(Panel(summary, title="Context Summary", border_style="cyan")); _save_session(session)
@@ -334,9 +349,6 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             
             elif command == '/settings':
                 _run_settings_tui(session, console)
-
-            elif command == '/test': actions.run_tests()
-            elif command == '/stage': actions.stage_files()
             
             else:
                 console.print(f"Unknown command: '{text}'.", style="yellow")

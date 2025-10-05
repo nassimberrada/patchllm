@@ -8,15 +8,13 @@ COMMAND_DEFINITIONS = [
     {"command": "/approve", "display": "agent - approve changes", "meta": "Applies the changes from the last run.", "states": ["has_pending_changes"]},
     {"command": "/diff", "display": "agent - view diff", "meta": "Shows the full diff for the proposed changes.", "states": ["has_pending_changes"]},
     {"command": "/retry", "display": "agent - retry with feedback", "meta": "Retries the last step with new feedback.", "states": ["has_pending_changes"]},
+    {"command": "/revert", "display": "agent - revert last approval", "meta": "Reverts the changes from the last /approve.", "states": ["can_revert"]},
     {"command": "/run", "display": "agent - run step", "meta": "Executes the current plan step.", "states": ["has_plan"]},
     {"command": "/skip", "display": "agent - skip step", "meta": "Skips the current step and moves to the next.", "states": ["has_plan"]},
     # Context Management
     {"command": "/add_context", "display": "context - add from scope", "meta": "Adds files from a scope to the current context.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/clear_context", "display": "context - clear", "meta": "Empties the current context.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/context", "display": "context - set from scope", "meta": "Replaces the context with files from a scope.", "states": ["initial", "has_goal", "has_plan"]},
-    # Git / System Utilities
-    {"command": "/stage", "display": "git - stage changes", "meta": "Stages all current changes with `git`.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/test", "display": "git - run tests", "meta": "Runs `pytest` to check for regressions.", "states": ["initial", "has_goal", "has_plan"]},
     # Planning Workflow
     {"command": "/ask", "display": "plan - ask question", "meta": "Ask a clarifying question about the current plan.", "states": ["has_plan"]},
     {"command": "/plan", "display": "plan - generate or manage", "meta": "Generates a plan or manages the existing one.", "states": ["has_goal", "has_plan"]},
@@ -26,6 +24,7 @@ COMMAND_DEFINITIONS = [
     # TUI / Session Management
     {"command": "/exit", "display": "tui - exit session", "meta": "Exits the agent session.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/help", "display": "tui - help", "meta": "Shows the detailed help message.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/history", "display": "tui - view session history", "meta": "Shows the history of actions for this session.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/scopes", "display": "tui - manage scopes", "meta": "Opens an interactive menu to manage your saved scopes.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/settings", "display": "tui - settings", "meta": "Configure the model and API keys.", "states": ["initial", "has_goal", "has_plan"]},
 ]
@@ -52,12 +51,14 @@ class PatchLLMCompleter(Completer):
         self.has_goal = False
         self.has_plan = False
         self.has_pending_changes = False
+        self.can_revert = False
 
-    def set_session_state(self, has_goal: bool, has_plan: bool, has_pending_changes: bool):
+    def set_session_state(self, has_goal: bool, has_plan: bool, has_pending_changes: bool, can_revert: bool):
         """Updates the completer's state from the agent session."""
         self.has_goal = has_goal
         self.has_plan = has_plan
         self.has_pending_changes = has_pending_changes
+        self.can_revert = can_revert
 
     def get_completions(self, document: Document, complete_event):
         """
@@ -75,6 +76,8 @@ class PatchLLMCompleter(Completer):
             active_states.add("has_plan")
         if self.has_pending_changes:
             active_states.add("has_pending_changes")
+        if self.can_revert:
+            active_states.add("can_revert")
 
         # Case 1: We are typing the first word (the command)
         if word_count == 0 or (word_count == 1 and not text.endswith(' ')):

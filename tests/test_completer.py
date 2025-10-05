@@ -16,7 +16,7 @@ def completer():
 
 def test_initial_state_completions(completer):
     """Tests that only valid initial commands are shown when no goal or plan exists."""
-    completer.set_session_state(has_goal=False, has_plan=False, has_pending_changes=False)
+    completer.set_session_state(has_goal=False, has_plan=False, has_pending_changes=False, can_revert=False)
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
@@ -30,10 +30,11 @@ def test_initial_state_completions(completer):
     assert "plan - generate or manage" not in completion_displays
     assert "agent - run step" not in completion_displays
     assert "agent - approve changes" not in completion_displays
+    assert "agent - revert last approval" not in completion_displays
 
 def test_has_goal_state_completions(completer):
     """Tests that plan generation is available once a goal is set."""
-    completer.set_session_state(has_goal=True, has_plan=False, has_pending_changes=False)
+    completer.set_session_state(has_goal=True, has_plan=False, has_pending_changes=False, can_revert=False)
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
@@ -48,7 +49,7 @@ def test_has_goal_state_completions(completer):
 
 def test_has_plan_state_completions(completer):
     """Tests that plan-related and execution commands are available once a plan exists."""
-    completer.set_session_state(has_goal=True, has_plan=True, has_pending_changes=False)
+    completer.set_session_state(has_goal=True, has_plan=True, has_pending_changes=False, can_revert=False)
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
@@ -64,7 +65,7 @@ def test_has_plan_state_completions(completer):
 
 def test_pending_changes_state_completions(completer):
     """Tests that approval/diff commands are available only after a run."""
-    completer.set_session_state(has_goal=True, has_plan=True, has_pending_changes=True)
+    completer.set_session_state(has_goal=True, has_plan=True, has_pending_changes=True, can_revert=False)
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
@@ -78,9 +79,23 @@ def test_pending_changes_state_completions(completer):
     assert "agent - view diff" in completion_displays
     assert "agent - retry with feedback" in completion_displays
 
+def test_can_revert_state_completions(completer):
+    """Tests that the revert command is available after an approval."""
+    # This state occurs right after an approval, where there are no *pending* changes, but there is something to revert.
+    completer.set_session_state(has_goal=True, has_plan=True, has_pending_changes=False, can_revert=True)
+    doc = Document("/")
+    completions = list(completer.get_completions(doc, None))
+    
+    completion_displays = {to_plain_text(c.display) for c in completions}
+
+    assert "agent - revert last approval" in completion_displays
+    # Approve should not be available, as there are no pending (un-approved) changes
+    assert "agent - approve changes" not in completion_displays
+
+
 def test_completion_object_structure(completer):
     """Tests that the completion object has the correct text, display, and meta."""
-    completer.set_session_state(has_goal=False, has_plan=False, has_pending_changes=False)
+    completer.set_session_state(has_goal=False, has_plan=False, has_pending_changes=False, can_revert=False)
     doc = Document("/task")
     completions = list(completer.get_completions(doc, None))
     

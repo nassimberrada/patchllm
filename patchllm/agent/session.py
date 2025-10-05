@@ -23,6 +23,8 @@ class AgentSession:
         self.scopes = scopes
         self.recipes = recipes
         self.last_execution_result: dict | None = None
+        self.action_history: list[str] = []
+        self.last_revert_state: list[dict] = []
         self.load_settings()
 
     def load_settings(self):
@@ -55,6 +57,8 @@ class AgentSession:
             "plan": self.plan,
             "current_step": self.current_step,
             "context_files": [p.as_posix() for p in self.context_files],
+            "action_history": self.action_history,
+            "last_revert_state": self.last_revert_state,
             # Note: We don't save planning_history to keep sessions clean.
         }
 
@@ -63,6 +67,8 @@ class AgentSession:
         self.goal = data.get("goal")
         self.plan = data.get("plan", [])
         self.current_step = data.get("current_step", 0)
+        self.action_history = data.get("action_history", [])
+        self.last_revert_state = data.get("last_revert_state", [])
         
         context_file_paths = data.get("context_files", [])
         if context_file_paths:
@@ -73,6 +79,7 @@ class AgentSession:
         self.plan = []
         self.current_step = 0
         self.planning_history = [] # Reset planning chat on new goal
+        self.action_history.append(f"Goal set: {goal}")
 
     def edit_plan_step(self, step_number: int, new_instruction: str) -> bool:
         """Edits an instruction in the current plan."""
@@ -119,6 +126,7 @@ class AgentSession:
             parsed_plan = planner.parse_plan_from_response(plan_response)
             if parsed_plan:
                 self.plan = parsed_plan
+                self.action_history.append("Plan generated.")
                 return True
         return False
 
@@ -159,16 +167,59 @@ class AgentSession:
         return result
 
     def approve_changes(self) -> bool:
-        from ..parser import paste_response
+        from ..parser import paste_response, _parse_file_blocks
         
         if not self.last_execution_result: return False
+
+        revert_state = []
+        parsed_blocks = _parse_file_blocks(self.last_execution_result["llm_response"])
+
+        for file_path, _ in parsed_blocks:
+            if file_path.exists():
+                try:
+                    original_content = file_path.read_text(encoding="utf-8")
+                    revert_state.append({"file_path": file_path.as_posix(), "content": original_content, "action": "modify"})
+                except Exception:
+                    pass # If we can't read it, we can't revert it. Skip.
+            else:
+                revert_state.append({"file_path": file_path.as_posix(), "content": None, "action": "create"})
+        
+        self.last_revert_state = revert_state
+        
         instruction_used = self.last_execution_result.get("instruction", self.plan[self.current_step])
         user_prompt = f"Context attached.\n\n---\n\nMy task was: {instruction_used}"
         self.history.append({"role": "user", "content": user_prompt})
         self.history.append({"role": "assistant", "content": self.last_execution_result["llm_response"]})
+        
         paste_response(self.last_execution_result["llm_response"])
+        
+        self.action_history.append(f"Approved changes for step {self.current_step + 1}.")
+        
         self.current_step += 1
         self.last_execution_result = None
+        return True
+
+    def revert_last_approval(self) -> bool:
+        """Writes the stored original content back to the files from the last approval."""
+        if not self.last_revert_state:
+            return False
+
+        for state in self.last_revert_state:
+            file_path = Path(state["file_path"])
+            action = state["action"]
+
+            try:
+                if action == "modify":
+                    file_path.write_text(state["content"], encoding="utf-8")
+                elif action == "create":
+                    if file_path.exists():
+                        file_path.unlink()
+            except Exception as e:
+                # Log an error but continue trying to revert other files
+                print(f"Warning: Could not revert {file_path}: {e}")
+        
+        self.action_history.append("Reverted last approval.")
+        self.last_revert_state = [] # Clear the state so it can't be reverted twice
         return True
 
     def retry_step(self, feedback: str) -> dict | None:

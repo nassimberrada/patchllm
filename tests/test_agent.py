@@ -125,12 +125,13 @@ def test_session_skip_step(mock_args):
 def test_session_approve_changes(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
     session.plan = ["do something"]
-    session.last_execution_result = { "instruction": "do something", "llm_response": "<file>..." }
+    llm_response = "<file_path:/tmp/a.txt>\n```python\nprint('hello')\n```"
+    session.last_execution_result = { "instruction": "do something", "llm_response": llm_response }
     # --- FIX: Patch the function in its original module, not where it's used ---
     with patch('patchllm.parser.paste_response') as mock_paste:
         success = session.approve_changes()
         assert success is True
-        mock_paste.assert_called_once_with("<file>...")
+        mock_paste.assert_called_once_with(llm_response)
         assert session.current_step == 1
         assert session.last_execution_result is None
 
@@ -145,21 +146,86 @@ def test_session_retry_step(mock_args):
         assert "feedback: it was wrong" in refined_instruction
         assert "original instruction" in refined_instruction
 
-# ... (rest of the test file is unchanged and correct) ...
 def test_session_serialization_and_deserialization(mock_args, temp_project):
     os.chdir(temp_project)
     session1 = AgentSession(args=mock_args, scopes={}, recipes={})
     session1.set_goal("my goal")
     session1.plan = ["step 1", "step 2"]
     session1.current_step = 1
+    session1.action_history = ["Goal set: my goal"]
+    session1.last_revert_state = [{"file_path": "/tmp/a.txt", "content": "old", "action": "modify"}]
     file_path = temp_project / "main.py"
     file_path.write_text("content")
     session1.add_files_and_rebuild_context([file_path])
+    
     session_data = session1.to_dict()
+    
     session2 = AgentSession(args=mock_args, scopes={}, recipes={})
     session2.from_dict(session_data)
+    
     assert session2.goal == session1.goal
     assert session2.plan == session1.plan
     assert session2.current_step == session1.current_step
     assert session2.context_files == session1.context_files
     assert "content" in session2.context
+    assert session2.action_history == session1.action_history
+    assert session2.last_revert_state == session1.last_revert_state
+
+def test_session_action_history(mock_args):
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+
+    session.set_goal("My test goal")
+    assert len(session.action_history) == 1
+    assert "My test goal" in session.action_history[0]
+
+    with patch('patchllm.agent.planner.generate_plan_and_history') as mock_planner:
+        mock_planner.return_value = ([{"role": "user", "content": ""}], "1. Do a thing")
+        session.create_plan()
+
+    assert len(session.action_history) == 2
+    assert "Plan generated" in session.action_history[1]
+
+    session.last_execution_result = {"llm_response": "<file_path:/tmp/a.txt>\n```python\nprint('a')\n```"}
+    session.approve_changes()
+
+    assert len(session.action_history) == 3
+    assert "Approved changes" in session.action_history[2]
+
+    session.revert_last_approval()
+    assert len(session.action_history) == 4
+    assert "Reverted" in session.action_history[3]
+
+def test_session_revert_last_approval(mock_args, tmp_path):
+    os.chdir(tmp_path)
+    
+    file_to_modify = tmp_path / "test.py"
+    original_content = "def hello_world():\n    return 'original'"
+    file_to_modify.write_text(original_content)
+
+    file_to_create = tmp_path / "new_file.py"
+    
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.current_step = 0
+    session.plan = ["Modify test.py and create new_file.py"]
+    
+    new_content_modify = "def hello_world():\n    return 'modified'"
+    new_content_create = "print('new file')"
+    
+    llm_response = (
+        f"<file_path:{file_to_modify.as_posix()}>\n```python\n{new_content_modify}\n```\n"
+        f"<file_path:{file_to_create.as_posix()}>\n```python\n{new_content_create}\n```"
+    )
+    session.last_execution_result = {"llm_response": llm_response}
+    
+    success_approve = session.approve_changes()
+    assert success_approve is True
+    assert file_to_modify.read_text() == new_content_modify
+    assert file_to_create.read_text() == new_content_create
+    assert len(session.last_revert_state) == 2
+    
+    success_revert = session.revert_last_approval()
+    assert success_revert is True
+    
+    assert file_to_modify.read_text() == original_content
+    assert not file_to_create.exists()
+    assert session.last_revert_state == []
