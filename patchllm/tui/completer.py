@@ -17,7 +17,6 @@ COMMAND_DEFINITIONS = [
     # Git / System Utilities
     {"command": "/stage", "display": "git - stage changes", "meta": "Stages all current changes with `git`.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/test", "display": "git - run tests", "meta": "Runs `pytest` to check for regressions.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/patch", "display": "patch - apply from clipboard", "meta": "Apply a patch from the system clipboard.", "states": ["initial", "has_goal", "has_plan"]},
     # Planning Workflow
     {"command": "/ask", "display": "plan - ask question", "meta": "Ask a clarifying question about the current plan.", "states": ["has_plan"]},
     {"command": "/plan", "display": "plan - generate or manage", "meta": "Generates a plan or manages the existing one.", "states": ["has_goal", "has_plan"]},

@@ -45,7 +45,6 @@ def _print_help():
     help_text.append("  /clear_context\n", style="bold"); help_text.append("    ↳ Empties the context.\n")
     help_text.append("  /scopes\n", style="bold"); help_text.append("        ↳ Enter the scope management menu.\n\n")
     help_text.append("Utilities:\n", style="bold cyan")
-    help_text.append("  /patch --clipboard\n", style="bold"); help_text.append("    ↳ Apply a patch from the clipboard.\n")
     help_text.append("  /test\n", style="bold"); help_text.append("          ↳ Run pytest to check for regressions.\n")
     help_text.append("  /stage\n", style="bold"); help_text.append("         ↳ Stage all current changes with git.\n\n")
     help_text.append("General:\n", style="bold cyan")
@@ -339,14 +338,6 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             elif command == '/test': actions.run_tests()
             elif command == '/stage': actions.stage_files()
             
-            elif command == '/patch':
-                if arg_string == '--clipboard':
-                    try:
-                        import pyperclip
-                        content = pyperclip.paste()
-                        if content: apply_external_patch(content, Path(".").resolve())
-                        else: console.print("⚠️ Clipboard is empty.", style="yellow")
-                    except ImportError: console.print("❌ 'pyperclip' is required.", style="red")
             else:
                 console.print(f"Unknown command: '{text}'.", style="yellow")
     except (KeyboardInterrupt, EOFError): console.print()
