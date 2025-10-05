@@ -3,6 +3,7 @@ from pathlib import Path
 from ..cli.helpers import get_system_prompt
 from ..scopes.builder import build_context, build_context_from_files, helpers
 from ..parser import paste_response
+from ..utils import load_from_py_file
 from . import planner, executor
 
 class AgentSession:
@@ -37,10 +38,6 @@ class AgentSession:
         return False
 
     def run_current_step(self, instruction_override: str | None = None) -> dict | None:
-        """
-        Runs the current step instruction through the executor.
-        Does not advance the session state; only generates a result for review.
-        """
         if not self.plan or self.current_step >= len(self.plan):
             return None
         
@@ -56,9 +53,6 @@ class AgentSession:
         return result
 
     def approve_changes(self) -> bool:
-        """
-        Commits the last execution result: applies changes, updates history, and advances the plan.
-        """
         if not self.last_execution_result:
             return False
 
@@ -74,9 +68,6 @@ class AgentSession:
         return True
 
     def retry_step(self, feedback: str) -> dict | None:
-        """
-        Retries the current step with additional user feedback.
-        """
         if self.current_step >= len(self.plan):
             return None 
 
@@ -86,6 +77,22 @@ class AgentSession:
             f"---\n\nMy original instruction was: {original_instruction}"
         )
         return self.run_current_step(instruction_override=refined_instruction)
+
+    def reload_scopes(self, scopes_file_path: str):
+        """
+        Reloads the scopes from the scopes file to update the session's internal state.
+        Handles the case where the file may not exist.
+        """
+        # --- FIX: Handle FileNotFoundError gracefully ---
+        try:
+            self.scopes = load_from_py_file(scopes_file_path, "scopes")
+        except FileNotFoundError:
+            # If the user deleted the file, we reset to an empty dict
+            self.scopes = {}
+        except Exception as e:
+            # For other errors, we print a warning but don't crash
+            print(f"Warning: Could not reload scopes file: {e}")
+        # --- End FIX ---
 
     def load_context_from_scope(self, scope_name: str) -> str:
         context_object = build_context(scope_name, self.scopes, Path(".").resolve())

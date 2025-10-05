@@ -5,12 +5,17 @@ from rich.markup import escape
 from pathlib import Path
 import argparse
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.completion import FuzzyCompleter
+
+from .completer import PatchLLMCompleter
+
 from ..agent.session import AgentSession
 from ..agent import actions
 from ..interactive.selector import select_files_interactively
 from ..patcher import apply_external_patch
 from ..cli.handlers import handle_scope_management
-from ..utils import write_scopes_to_file
 
 def _print_help():
     """Prints the help message with available commands."""
@@ -18,47 +23,28 @@ def _print_help():
     help_text.append("PatchLLM Agent Commands\n\n", style="bold")
     
     help_text.append("Agent Workflow:\n", style="bold cyan")
-    help_text.append("  /task <goal>\n", style="bold")
-    help_text.append("    ↳ Sets the high-level goal for the agent.\n")
-    help_text.append("  /plan\n", style="bold")
-    help_text.append("    ↳ Generates a step-by-step plan to achieve the goal.\n")
-    help_text.append("  /run\n", style="bold")
-    help_text.append("    ↳ Executes the current step and shows a diff.\n")
-    help_text.append("  /approve\n", style="bold")
-    help_text.append("    ↳ Applies the changes from the last diff.\n")
-    help_text.append("  /retry <feedback>\n", style="bold")
-    help_text.append("    ↳ Retries the last step with new feedback.\n\n")
-
+    help_text.append("  /task <goal>\n", style="bold"); help_text.append("    ↳ Sets the high-level goal.\n")
+    help_text.append("  /plan\n", style="bold"); help_text.append("          ↳ Generates a plan to achieve the goal.\n")
+    help_text.append("  /run\n", style="bold"); help_text.append("           ↳ Executes the current step and shows a diff.\n")
+    help_text.append("  /approve\n", style="bold"); help_text.append("     ↳ Applies the changes from the last diff.\n")
+    help_text.append("  /retry <feedback>\n", style="bold"); help_text.append("↳ Retries the last step with new feedback.\n\n")
     help_text.append("Context Management:\n", style="bold cyan")
-    help_text.append("  /context <scope>\n", style="bold")
-    help_text.append("    ↳ Replaces context with a saved or dynamic scope.\n")
-    help_text.append("  /add_context <scope>\n", style="bold")
-    help_text.append("    ↳ Adds files from a scope to the current context.\n")
-    help_text.append("  /add_context --interactive\n", style="bold")
-    help_text.append("    ↳ Use a fuzzy finder to add files/folders to context.\n")
-    help_text.append("  /clear_context\n", style="bold")
-    help_text.append("    ↳ Empties the context.\n")
-    help_text.append("  /scopes\n", style="bold")
-    help_text.append("    ↳ Enter the interactive scope management menu.\n\n")
-
+    help_text.append("  /context <scope>\n", style="bold"); help_text.append("↳ Replaces context with a scope.\n")
+    help_text.append("  /add_context <scope>\n", style="bold"); help_text.append("↳ Adds files from a scope to context.\n")
+    help_text.append("  /add_context --interactive\n", style="bold"); help_text.append("↳ Use fuzzy finder to add files.\n")
+    help_text.append("  /clear_context\n", style="bold"); help_text.append("↳ Empties the context.\n")
+    help_text.append("  /scopes\n", style="bold"); help_text.append("        ↳ Enter the scope management menu.\n\n")
     help_text.append("Utilities:\n", style="bold cyan")
-    help_text.append("  /patch --clipboard\n", style="bold")
-    help_text.append("    ↳ Apply a patch from the system clipboard.\n")
-    help_text.append("  /test\n", style="bold")
-    help_text.append("    ↳ Run pytest to check for regressions.\n")
-    help_text.append("  /stage\n", style="bold")
-    help_text.append("    ↳ Stage all current changes with git.\n\n")
-    
+    help_text.append("  /patch --clipboard\n", style="bold"); help_text.append("↳ Apply a patch from the clipboard.\n")
+    help_text.append("  /test\n", style="bold"); help_text.append("          ↳ Run pytest to check for regressions.\n")
+    help_text.append("  /stage\n", style="bold"); help_text.append("         ↳ Stage all current changes with git.\n\n")
     help_text.append("General:\n", style="bold cyan")
-    help_text.append("  /help\n", style="bold")
-    help_text.append("    ↳ Shows this help message.\n")
-    help_text.append("  /exit\n", style="bold")
-    help_text.append("    ↳ Exits the agent session.\n")
+    help_text.append("  /help\n", style="bold"); help_text.append("          ↳ Shows this help message.\n")
+    help_text.append("  /exit\n", style="bold"); help_text.append("          ↳ Exits the agent session.\n")
     return Panel(help_text, title="Help", border_style="green")
 
 
 def _display_execution_result(result, console):
-    """Helper function to display diffs from an execution result."""
     if result and result.get("diffs"):
         for diff in result["diffs"]:
             panel_title = f"Diff: {Path(diff['file_path']).name}"
@@ -69,63 +55,78 @@ def _display_execution_result(result, console):
         console.print(f"❌ Step failed.", style="red")
 
 def _run_scope_management_tui(scopes, scopes_file_path, console):
-    """A sub-TUI for managing scopes."""
+    """A sub-TUI for managing scopes, reusing the core handler logic."""
     try:
         from InquirerPy import prompt
         from InquirerPy.validator import EmptyInputValidator
+        from InquirerPy.exceptions import InvalidArgument
     except ImportError:
         console.print("❌ 'InquirerPy' is required for scope management.", style="red")
         console.print("   Install it with: pip install 'patchllm[interactive]'", style="cyan")
         return
 
     console.print("\n--- Scope Management ---", style="bold yellow")
-    console.print("Type `back` or use Ctrl+C to return to the main agent.", style="dim")
+    console.print("Use Ctrl+C to return to the main agent.", style="dim")
 
     while True:
         try:
             action_q = {
                 "type": "list", "name": "action", "message": "Select an action:",
-                "choices": ["List scopes", "Show a scope", "Add a scope", "Remove a scope", "Back"],
-                "border": True,
+                "choices": ["List scopes", "Show a scope", "Add a scope", "Remove a scope", "Back to agent"],
+                "border": True, "cycle": False,
             }
             result = prompt([action_q])
-            action = result.get("action") if result else "Back"
+            action = result.get("action") if result else "Back to agent"
 
-            if action == "Back":
+            if action == "Back to agent":
                 break
 
-            action_args = argparse.Namespace(list_scopes=False, show_scope=None, add_scope=None, remove_scope=None, update_scope=None)
+            # Create a temporary, clean args object for each action
+            action_args = argparse.Namespace(list_scopes=False, show_scope=None, add_scope=None, remove_scope=None)
             
             if action == "List scopes":
                 action_args.list_scopes = True
-            elif action == "Show a scope":
-                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to show?", "choices": sorted(scopes.keys())}
+            elif action in ["Show a scope", "Remove a scope"]:
+                if not scopes: console.print("No scopes found.", style="yellow"); continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": f"Which scope to {action.lower().split()[0]}?", "choices": sorted(scopes.keys())}
                 scope_r = prompt([scope_q])
-                if scope_r: action_args.show_scope = scope_r.get("scope")
+                if scope_r and scope_r.get("scope"):
+                    if action == "Show a scope": action_args.show_scope = scope_r.get("scope")
+                    else: action_args.remove_scope = scope_r.get("scope")
+                else: continue # User cancelled
             elif action == "Add a scope":
                 scope_q = {"type": "input", "name": "scope", "message": "Name for the new scope:", "validate": EmptyInputValidator()}
                 scope_r = prompt([scope_q])
-                if scope_r: action_args.add_scope = scope_r.get("scope")
-            elif action == "Remove a scope":
-                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to remove?", "choices": sorted(scopes.keys())}
-                scope_r = prompt([scope_q])
-                if scope_r: action_args.remove_scope = scope_r.get("scope")
+                if scope_r and scope_r.get("scope"):
+                     action_args.add_scope = scope_r.get("scope")
+                else: continue # User cancelled
             
+            # Reuse the existing, tested handler to perform the action
             handle_scope_management(action_args, scopes, scopes_file_path, None)
 
-        except (KeyboardInterrupt, TypeError):
+        except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError):
             break
-    console.print("\n--- Exiting Scope Management ---", style="bold yellow")
+    console.print("\n--- Returning to Agent ---", style="bold yellow")
 
 
 def run_tui(args, scopes, recipes, scopes_file_path):
     console = Console()
     session = AgentSession(args, scopes, recipes)
-    console.print("🤖 Welcome to the PatchLLM Agent. Type `/help` for commands or `/exit` to quit.", style="bold blue")
+    
+    all_commands = [
+        "/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context",
+        "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit"
+    ]
+    completer = PatchLLMCompleter(commands=all_commands, scopes=session.scopes)
+    fuzzy_completer = FuzzyCompleter(completer)
+    history_file = Path("~/.patchllm_history").expanduser()
+    prompt_session = PromptSession(history=FileHistory(history_file))
+
+    console.print("🤖 Welcome to the PatchLLM Agent. Type `/` and [TAB] for commands. `/exit` to quit.", style="bold blue")
 
     try:
         while True:
-            text = console.input("[bold]>>> [/bold]").strip()
+            text = prompt_session.prompt(">>> ", completer=fuzzy_completer).strip()
             if not text: continue
             
             command_parts = text.split()
@@ -179,7 +180,6 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                     if new_files:
                         with console.status("[cyan]Updating context..."): summary = session.add_files_and_rebuild_context(new_files)
                         console.print(Panel(summary, title="Context Summary", border_style="cyan", expand=False))
-                    else: console.print("No files selected.", style="yellow")
                 else:
                     with console.status("[cyan]Updating context..."): summary = session.add_context_from_scope(scope_name)
                     console.print(Panel(summary, title="Context Summary", border_style="cyan", expand=False))
@@ -188,9 +188,11 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 session.clear_context(); console.print("✅ Context cleared.", style="green")
             elif command == '/scopes':
                 _run_scope_management_tui(session.scopes, scopes_file_path, console)
-                # Ensure changes are reflected in the current session
-                write_scopes_to_file(scopes_file_path, session.scopes)
-            
+                # After management is done, reload scopes in case of changes
+                session.reload_scopes(scopes_file_path)
+                # Also, we need to rebuild the completer with the new scope list
+                completer.all_scopes = sorted(list(session.scopes.keys()) + completer.dynamic_scopes)
+
             elif command == '/test': actions.run_tests()
             elif command == '/stage': actions.stage_files()
             elif command == '/patch':
@@ -204,6 +206,7 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 else: console.print("Unknown `/patch` command. Did you mean `/patch --clipboard`?", style="yellow")
             else:
                 console.print(f"Unknown command: '{text}'. Type `/help` for a list of commands.", style="yellow")
+
     except KeyboardInterrupt: console.print()
     except Exception as e: console.print(f"An unexpected error occurred: {e}", style="bold red")
     console.print("\n👋 Exiting agent session. Goodbye!", style="yellow")
