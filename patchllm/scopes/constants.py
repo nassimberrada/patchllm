@@ -64,7 +64,8 @@ LANGUAGE_PATTERNS = {
         'patterns': [
             ('imports', re.compile(r"^\s*import\s+.*from\s+.*|^\s*(?:const|let|var)\s+.*?=\s*require\(.*")),
             ('class', re.compile(r"^\s*(?:export\s+)?class\s+\w+.*\{.*\}")),
-            ('function', re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+\w+\(.*\)\s*\{|^\s*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async)?\s*\(.*\)\s*=>\s*\{?")),
+            # --- FIX: Modified regex to capture the entire line for single-line functions ---
+            ('function', re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+\w+\(.*\)\s*\{.*|^\s*(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async)?\s*\(.*\)\s*=>\s*\{?.*")),
         ]
     }
 }
