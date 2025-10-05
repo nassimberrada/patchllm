@@ -11,15 +11,15 @@ class PatchLLMCompleter(Completer):
         
         static_scopes = sorted(list(scopes.keys()))
         
-        # --- FIX: Store dynamic_scopes as an instance attribute ---
         self.dynamic_scopes = [
             "@git", "@git:staged", "@git:unstaged", "@git:lastcommit",
             "@git:conflicts", "@git:branch:", "@recent", "@structure",
             "@dir:", "@related:", "@search:", "@error:"
         ]
-        # --- End FIX ---
         
         self.all_scopes = sorted(static_scopes + self.dynamic_scopes)
+
+        self.plan_sub_commands = ['--edit ', '--rm ', '--add ']
 
     def get_completions(self, document: Document, complete_event):
         """
@@ -55,4 +55,20 @@ class PatchLLMCompleter(Completer):
                 for scope in self.all_scopes:
                     if scope.startswith(scope_to_complete):
                         yield Completion(scope, start_position=-len(scope_to_complete))
+                return
+
+        # Case 3: We are in a "plan" management context
+        if words[0] == '/plan':
+            # Subcase 3a: We have typed '/plan ' and want to see sub-commands
+            if word_count == 1 and text.endswith(' '):
+                for sub_cmd in self.plan_sub_commands:
+                    yield Completion(sub_cmd, start_position=0)
+                return
+            
+            # Subcase 3b: We are typing the sub-command
+            if word_count == 2 and not text.endswith(' '):
+                sub_cmd_to_complete = words[1]
+                for sub_cmd in self.plan_sub_commands:
+                    if sub_cmd.startswith(sub_cmd_to_complete):
+                        yield Completion(sub_cmd, start_position=-len(sub_cmd_to_complete))
                 return

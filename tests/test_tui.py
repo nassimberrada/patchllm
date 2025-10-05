@@ -42,6 +42,8 @@ def test_tui_help_command(mock_prompt, temp_project, capsys):
     captured = capsys.readouterr()
     assert "PatchLLM Agent Commands" in captured.out
     assert "/context <scope>" in captured.out
+    assert "/plan --edit <N> <text>" in captured.out
+    assert "/skip" in captured.out
 
 @patch('patchllm.tui.interface.AgentSession')
 @patch('prompt_toolkit.PromptSession.prompt')
@@ -53,6 +55,50 @@ def test_tui_context_command_calls_session(mock_prompt, mock_agent_session, temp
     with patch.object(sys, 'argv', ['patchllm']):
         main()
     mock_session_instance.load_context_from_scope.assert_called_once_with("my_scope")
+
+@patch('patchllm.tui.interface.AgentSession')
+@patch('prompt_toolkit.PromptSession.prompt')
+def test_tui_plan_edit_command(mock_prompt, mock_agent_session, temp_project):
+    os.chdir(temp_project)
+    mock_session_instance = mock_agent_session.return_value
+    mock_session_instance.plan = ["step 1"]
+    mock_prompt.side_effect = ["/plan --edit 1 this is the new text", "/exit"]
+    with patch.object(sys, 'argv', ['patchllm']):
+        main()
+    mock_session_instance.edit_plan_step.assert_called_once_with(1, "this is the new text")
+
+@patch('patchllm.tui.interface.AgentSession')
+@patch('prompt_toolkit.PromptSession.prompt')
+def test_tui_plan_rm_command(mock_prompt, mock_agent_session, temp_project):
+    os.chdir(temp_project)
+    mock_session_instance = mock_agent_session.return_value
+    mock_session_instance.plan = ["step 1"]
+    mock_prompt.side_effect = ["/plan --rm 1", "/exit"]
+    with patch.object(sys, 'argv', ['patchllm']):
+        main()
+    mock_session_instance.remove_plan_step.assert_called_once_with(1)
+
+@patch('patchllm.tui.interface.AgentSession')
+@patch('prompt_toolkit.PromptSession.prompt')
+def test_tui_plan_add_command(mock_prompt, mock_agent_session, temp_project):
+    os.chdir(temp_project)
+    mock_session_instance = mock_agent_session.return_value
+    mock_session_instance.plan = ["step 1"]
+    mock_prompt.side_effect = ["/plan --add a new step", "/exit"]
+    with patch.object(sys, 'argv', ['patchllm']):
+        main()
+    mock_session_instance.add_plan_step.assert_called_once_with("a new step")
+
+@patch('patchllm.tui.interface.AgentSession')
+@patch('prompt_toolkit.PromptSession.prompt')
+def test_tui_skip_command(mock_prompt, mock_agent_session, temp_project):
+    os.chdir(temp_project)
+    mock_session_instance = mock_agent_session.return_value
+    mock_session_instance.plan = ["step 1"]
+    mock_prompt.side_effect = ["/skip", "/exit"]
+    with patch.object(sys, 'argv', ['patchllm']):
+        main()
+    mock_session_instance.skip_step.assert_called_once()
 
 @patch('patchllm.tui.interface.select_files_interactively')
 @patch('patchllm.tui.interface.AgentSession')

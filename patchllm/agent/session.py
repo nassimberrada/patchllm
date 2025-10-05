@@ -44,6 +44,37 @@ class AgentSession:
         self.plan = []
         self.current_step = 0
 
+    def edit_plan_step(self, step_number: int, new_instruction: str) -> bool:
+        """Edits an instruction in the current plan."""
+        # step_number is 1-indexed for user-friendliness
+        if 1 <= step_number <= len(self.plan):
+            self.plan[step_number - 1] = new_instruction
+            return True
+        return False
+
+    def remove_plan_step(self, step_number: int) -> bool:
+        """Removes a step from the current plan."""
+        # step_number is 1-indexed
+        if 1 <= step_number <= len(self.plan):
+            del self.plan[step_number - 1]
+            # If we remove a step before the current one, adjust the current step index
+            if step_number - 1 < self.current_step:
+                self.current_step -=1
+            return True
+        return False
+
+    def add_plan_step(self, instruction: str):
+        """Adds a new instruction to the end of the plan."""
+        self.plan.append(instruction)
+
+    def skip_step(self) -> bool:
+        """Skips the current step and moves to the next one."""
+        if self.current_step < len(self.plan):
+            self.current_step += 1
+            self.last_execution_result = None # Clear any pending changes
+            return True
+        return False
+
     def create_plan(self) -> bool:
         # --- FIX: Moved imports inside the method ---
         from ..scopes.builder import helpers

@@ -6,6 +6,7 @@ from pathlib import Path
 import argparse
 import json
 import os
+import re
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
@@ -26,7 +27,11 @@ def _print_help():
     help_text.append("Agent Workflow:\n", style="bold cyan")
     help_text.append("  /task <goal>", style="bold"); help_text.append("\n    ↳ Sets the high-level goal.\n")
     help_text.append("  /plan", style="bold"); help_text.append("\n    ↳ Generates a plan to achieve the goal.\n")
+    help_text.append("  /plan --edit <N> <text>", style="bold"); help_text.append("\n    ↳ Edits step N of the plan.\n")
+    help_text.append("  /plan --rm <N>", style="bold"); help_text.append("\n    ↳ Removes step N from the plan.\n")
+    help_text.append("  /plan --add <text>", style="bold"); help_text.append("\n    ↳ Adds a new step to the end of the plan.\n")
     help_text.append("  /run", style="bold"); help_text.append("\n    ↳ Executes the current step and shows a summary.\n")
+    help_text.append("  /skip", style="bold"); help_text.append("\n    ↳ Skips the current step.\n")
     help_text.append("  /diff [all|filename]", style="bold"); help_text.append("\n    ↳ Shows the full diff for a file or all files.\n")
     help_text.append("  /approve", style="bold"); help_text.append("\n    ↳ Applies the changes from the last run.\n")
     help_text.append("  /retry <feedback>", style="bold"); help_text.append("\n    ↳ Retries the last step with new feedback.\n\n")
@@ -118,7 +123,7 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             except Exception as e: console.print(f"⚠️ Could not resume session: {e}", style="yellow"); _clear_session()
         else: _clear_session()
 
-    completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff"], scopes=session.scopes)
+    completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff", "/skip"], scopes=session.scopes)
     prompt_session = PromptSession(history=FileHistory(Path("~/.patchllm_history").expanduser()))
 
     console.print("🤖 Welcome to the PatchLLM Agent. Type `/` and [TAB] for commands. `/exit` to quit.", style="bold blue")
@@ -136,11 +141,38 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             elif command == '/task':
                 session.set_goal(arg_string); console.print("✅ Goal set.", style="green"); _save_session(session)
             elif command == '/plan':
-                if not session.goal: console.print("❌ No goal set.", style="red"); continue
-                with console.status("[cyan]Generating plan..."): success = session.create_plan()
-                if success:
-                    console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Execution Plan", border_style="magenta")); _save_session(session)
-                else: console.print("❌ Failed to generate a plan.", style="red")
+                if not arg_string:
+                    if not session.goal: console.print("❌ No goal set.", style="red"); continue
+                    with console.status("[cyan]Generating plan..."): success = session.create_plan()
+                    if success:
+                        console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Execution Plan", border_style="magenta")); _save_session(session)
+                    else: console.print("❌ Failed to generate a plan.", style="red")
+                else:
+                    if not session.plan:
+                        console.print("❌ No plan to manage. Generate one with `/plan` first.", style="red"); continue
+                    
+                    edit_match = re.match(r"--edit\s+(\d+)\s+(.*)", arg_string, re.DOTALL)
+                    rm_match = re.match(r"--rm\s+(\d+)", arg_string)
+                    add_match = re.match(r"--add\s+(.*)", arg_string, re.DOTALL)
+
+                    if edit_match:
+                        step_num, new_text = int(edit_match.group(1)), edit_match.group(2)
+                        if session.edit_plan_step(step_num, new_text):
+                            console.print(f"✅ Step {step_num} updated.", style="green"); _save_session(session)
+                        else: console.print(f"❌ Invalid step number: {step_num}.", style="red")
+                    elif rm_match:
+                        step_num = int(rm_match.group(1))
+                        if session.remove_plan_step(step_num):
+                            console.print(f"✅ Step {step_num} removed.", style="green"); _save_session(session)
+                        else: console.print(f"❌ Invalid step number: {step_num}.", style="red")
+                    elif add_match:
+                        new_text = add_match.group(1)
+                        session.add_plan_step(new_text)
+                        console.print("✅ New step added to the end of the plan.", style="green"); _save_session(session)
+                    else:
+                        console.print(f"❌ Unknown argument for /plan: '{arg_string}'. Use --edit, --rm, or --add.", style="red")
+
+                    console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Updated Execution Plan", border_style="magenta"))
             
             elif command == '/run':
                 if not session.plan: console.print("❌ No plan.", style="red"); continue
@@ -149,6 +181,14 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 with console.status("[cyan]Agent is working..."): result = session.run_current_step()
                 _display_execution_summary(result, console)
                 if result: console.print("✅ Preview ready. Use `/diff` to review.", style="green")
+
+            elif command == '/skip':
+                if not session.plan: console.print("❌ No plan to skip from.", style="red"); continue
+                if session.skip_step():
+                    console.print(f"✅ Step {session.current_step} skipped. Now at step {session.current_step + 1}.", style="green")
+                    _save_session(session)
+                else:
+                    console.print("✅ Plan already complete. Nothing to skip.", style="green")
 
             elif command == '/diff':
                 if not session.last_execution_result or not session.last_execution_result.get("diffs"): console.print("❌ No diff to display.", style="red"); continue
