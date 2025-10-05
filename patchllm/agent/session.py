@@ -1,10 +1,8 @@
 from pathlib import Path
+import json
 
+# Only import what's needed for initialization at the top level.
 from ..cli.helpers import get_system_prompt
-from ..scopes.builder import build_context, build_context_from_files, helpers
-from ..parser import paste_response
-from ..utils import load_from_py_file
-from . import planner, executor
 
 class AgentSession:
     """
@@ -22,55 +20,67 @@ class AgentSession:
         self.recipes = recipes
         self.last_execution_result: dict | None = None
 
+    def to_dict(self) -> dict:
+        """Serializes the session's state to a dictionary."""
+        return {
+            "goal": self.goal,
+            "plan": self.plan,
+            "current_step": self.current_step,
+            "context_files": [p.as_posix() for p in self.context_files],
+        }
+
+    def from_dict(self, data: dict):
+        """Restores the session's state from a dictionary."""
+        self.goal = data.get("goal")
+        self.plan = data.get("plan", [])
+        self.current_step = data.get("current_step", 0)
+        
+        context_file_paths = data.get("context_files", [])
+        if context_file_paths:
+            self.add_files_and_rebuild_context([Path(p) for p in context_file_paths])
+
     def set_goal(self, goal: str):
         self.goal = goal
         self.plan = []
         self.current_step = 0
 
     def create_plan(self) -> bool:
-        if not self.goal:
-            return False
+        # --- FIX: Moved imports inside the method ---
+        from ..scopes.builder import helpers
+        from . import planner
+        
+        if not self.goal: return False
         context_tree = helpers.generate_source_tree(Path(".").resolve(), self.context_files)
         plan = planner.generate_plan(self.goal, context_tree, self.args.model)
-        if plan:
-            self.plan = plan
-            return True
+        if plan: self.plan = plan; return True
         return False
 
     def run_current_step(self, instruction_override: str | None = None) -> dict | None:
-        if not self.plan or self.current_step >= len(self.plan):
-            return None
+        # --- FIX: Moved import inside the method ---
+        from . import executor
         
+        if not self.plan or self.current_step >= len(self.plan): return None
         step_instruction = instruction_override or self.plan[self.current_step]
-        
-        result = executor.execute_step(
-            step_instruction, self.history, self.context, self.args.model
-        )
-        
-        if result:
-            self.last_execution_result = result
-        
+        result = executor.execute_step(step_instruction, self.history, self.context, self.args.model)
+        if result: self.last_execution_result = result
         return result
 
     def approve_changes(self) -> bool:
-        if not self.last_execution_result:
-            return False
-
+        # --- FIX: Moved import inside the method ---
+        from ..parser import paste_response
+        
+        if not self.last_execution_result: return False
         instruction_used = self.last_execution_result.get("instruction", self.plan[self.current_step])
         user_prompt = f"Context attached.\n\n---\n\nMy task was: {instruction_used}"
         self.history.append({"role": "user", "content": user_prompt})
         self.history.append({"role": "assistant", "content": self.last_execution_result["llm_response"]})
-        
         paste_response(self.last_execution_result["llm_response"])
-        
         self.current_step += 1
         self.last_execution_result = None
         return True
 
     def retry_step(self, feedback: str) -> dict | None:
-        if self.current_step >= len(self.plan):
-            return None 
-
+        if self.current_step >= len(self.plan): return None 
         original_instruction = self.plan[self.current_step]
         refined_instruction = (
             f"My previous attempt was not correct. Here is my feedback: {feedback}\n\n"
@@ -79,22 +89,20 @@ class AgentSession:
         return self.run_current_step(instruction_override=refined_instruction)
 
     def reload_scopes(self, scopes_file_path: str):
-        """
-        Reloads the scopes from the scopes file to update the session's internal state.
-        Handles the case where the file may not exist.
-        """
-        # --- FIX: Handle FileNotFoundError gracefully ---
+        # --- FIX: Moved import inside the method ---
+        from ..utils import load_from_py_file
+        
         try:
             self.scopes = load_from_py_file(scopes_file_path, "scopes")
         except FileNotFoundError:
-            # If the user deleted the file, we reset to an empty dict
             self.scopes = {}
         except Exception as e:
-            # For other errors, we print a warning but don't crash
             print(f"Warning: Could not reload scopes file: {e}")
-        # --- End FIX ---
 
     def load_context_from_scope(self, scope_name: str) -> str:
+        # --- FIX: Moved import inside the method ---
+        from ..scopes.builder import build_context
+        
         context_object = build_context(scope_name, self.scopes, Path(".").resolve())
         if context_object:
             self.context = context_object.get("context")
@@ -104,6 +112,9 @@ class AgentSession:
         return f"⚠️  Could not build context for scope '{scope_name}'. No files found."
 
     def add_files_and_rebuild_context(self, new_files: list[Path]) -> str:
+        # --- FIX: Moved import inside the method ---
+        from ..scopes.builder import build_context_from_files
+        
         current_files_set = set(self.context_files)
         updated_files = sorted(list(current_files_set.union(set(new_files))))
         context_object = build_context_from_files(updated_files, Path(".").resolve())
@@ -114,6 +125,9 @@ class AgentSession:
         return "⚠️  Failed to rebuild context with new files."
 
     def add_context_from_scope(self, scope_name: str) -> str:
+        # --- FIX: Moved import inside the method ---
+        from ..scopes.builder import build_context
+        
         context_object = build_context(scope_name, self.scopes, Path(".").resolve())
         if not context_object or not context_object.get("files"):
             return f"⚠️  Scope '{scope_name}' resolved to zero files. Context is unchanged."
