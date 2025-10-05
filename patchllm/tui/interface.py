@@ -2,11 +2,13 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.markup import escape
+from rich.json import JSON
 from pathlib import Path
 import argparse
 import json
 import os
 import re
+import pprint
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
@@ -20,6 +22,7 @@ from ..interactive.selector import select_files_interactively
 from ..patcher import apply_external_patch
 from ..cli.handlers import handle_scope_management
 from ..scopes.builder import helpers
+from ..utils import write_scopes_to_file
 
 SESSION_FILE_PATH = Path(".patchllm_session.json")
 
@@ -149,6 +152,120 @@ def _run_settings_tui(session: AgentSession, console: Console):
         except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
     console.print("\n--- Returning to Agent ---", style="bold yellow")
 
+def _edit_string_list_interactive(current_list: list[str], item_name: str, console: Console) -> list[str] | None:
+    """Helper TUI to add/remove items from a simple list of strings."""
+    try:
+        from InquirerPy import prompt
+        from InquirerPy.validator import EmptyInputValidator
+    except ImportError: return None
+
+    edited_list = current_list[:]
+    while True:
+        console.print(Panel(f"[bold]Current {item_name}s:[/]\n" + "\n".join(f"- {i}" for i in edited_list) if edited_list else "  (empty)", expand=False))
+        action_q = {"type": "list", "name": "action", "message": f"Manage {item_name}s", "choices": [f"Add a {item_name}", f"Remove a {item_name}", "Done"], "border": True}
+        action_r = prompt([action_q])
+        action = action_r.get("action") if action_r else "Done"
+
+        if action == "Done": return edited_list
+        if action == f"Add a {item_name}":
+            item_q = {"type": "input", "name": "item", "message": "Enter new item:", "validate": EmptyInputValidator()}
+            item_r = prompt([item_q])
+            new_item = item_r.get("item") if item_r else None
+            if new_item: edited_list.append(new_item)
+        elif action == f"Remove a {item_name}":
+            if not edited_list: console.print(f"No {item_name}s to remove.", style="yellow"); continue
+            remove_q = {"type": "checkbox", "name": "items", "message": "Select items to remove", "choices": edited_list}
+            remove_r = prompt([remove_q])
+            to_remove = remove_r.get("items", []) if remove_r else []
+            edited_list = [item for item in edited_list if item not in to_remove]
+
+def _edit_patterns_interactive(current_list: list[str], pattern_type: str, console: Console) -> list[str] | None:
+    """Helper TUI to add/remove glob patterns, with an option for interactive selection."""
+    try:
+        from InquirerPy import prompt
+        from InquirerPy.validator import EmptyInputValidator
+    except ImportError: return None
+
+    edited_list = current_list[:]
+    while True:
+        console.print(Panel(f"[bold]Current {pattern_type} Patterns:[/]\n" + "\n".join(f"- {i}" for i in edited_list) if edited_list else "  (empty)", expand=False))
+        choices = ["Add pattern manually", "Remove a pattern", "Add from interactive selector", "Done"]
+        action_q = {"type": "list", "name": "action", "message": "Manage patterns", "choices": choices, "border": True}
+        action_r = prompt([action_q])
+        action = action_r.get("action") if action_r else "Done"
+
+        if action == "Done": return edited_list
+        elif action == "Add pattern manually":
+            item_q = {"type": "input", "name": "item", "message": "Enter glob pattern (e.g., 'src/**/*.py'):", "validate": EmptyInputValidator()}
+            item_r = prompt([item_q])
+            new_item = item_r.get("item") if item_r else None
+            if new_item: edited_list.append(new_item)
+        elif action == "Remove a pattern":
+            if not edited_list: console.print("No patterns to remove.", style="yellow"); continue
+            remove_q = {"type": "checkbox", "name": "items", "message": "Select patterns to remove", "choices": edited_list}
+            remove_r = prompt([remove_q])
+            to_remove = remove_r.get("items", []) if remove_r else []
+            edited_list = [item for item in edited_list if item not in to_remove]
+        elif action == "Add from interactive selector":
+            base_path = Path(".").resolve()
+            selected_files = select_files_interactively(base_path)
+            if selected_files:
+                new_patterns = [p.relative_to(base_path).as_posix() for p in selected_files]
+                edited_list.extend(new_patterns)
+                console.print(f"✅ Added {len(new_patterns)} file/folder pattern(s).", style="green")
+
+def _interactive_scope_editor(console: Console, existing_scope: dict | None = None) -> dict | None:
+    """A TUI for creating or editing a single scope dictionary."""
+    try:
+        from InquirerPy import prompt
+    except ImportError:
+        console.print("❌ 'InquirerPy' is required. `pip install 'patchllm[interactive]'`", style="red"); return None
+
+    if existing_scope:
+        scope_data = existing_scope.copy()
+    else: # Default for a new scope
+        scope_data = {"path": ".", "include_patterns": ["**/*"], "exclude_patterns": [], "search_words": [], "urls": [], "exclude_extensions": []}
+
+    while True:
+        console.print(Panel(JSON(json.dumps(scope_data)), title="Current Scope Configuration", border_style="blue"))
+        
+        choices = [
+            f"Edit base path",
+            f"Manage include patterns ({len(scope_data.get('include_patterns', []))})",
+            f"Manage exclude patterns ({len(scope_data.get('exclude_patterns', []))})",
+            f"Manage search keywords ({len(scope_data.get('search_words', []))})",
+            f"Manage URLs ({len(scope_data.get('urls', []))})",
+            f"Manage excluded extensions ({len(scope_data.get('exclude_extensions', []))})",
+            "Save and Return",
+            "Cancel and Discard"
+        ]
+        action_q = {"type": "list", "name": "action", "message": "Select field to edit", "choices": choices, "border": True}
+        action_r = prompt([action_q])
+        action = action_r.get("action") if action_r else "Cancel and Discard"
+
+        if action == "Save and Return": return scope_data
+        if action == "Cancel and Discard": return None
+        
+        if action.startswith("Edit base path"):
+            path_q = {"type": "input", "name": "path", "message": "Enter new base path:", "default": scope_data.get('path', '.')}
+            path_r = prompt([path_q])
+            if path_r and path_r.get("path") is not None: scope_data['path'] = path_r.get("path")
+        elif action.startswith("Manage include patterns"):
+            new_list = _edit_patterns_interactive(scope_data.get('include_patterns', []), "Include", console)
+            if new_list is not None: scope_data['include_patterns'] = new_list
+        elif action.startswith("Manage exclude patterns"):
+            new_list = _edit_patterns_interactive(scope_data.get('exclude_patterns', []), "Exclude", console)
+            if new_list is not None: scope_data['exclude_patterns'] = new_list
+        elif action.startswith("Manage search keywords"):
+            new_list = _edit_string_list_interactive(scope_data.get('search_words', []), "keyword", console)
+            if new_list is not None: scope_data['search_words'] = new_list
+        elif action.startswith("Manage URLs"):
+            new_list = _edit_string_list_interactive(scope_data.get('urls', []), "URL", console)
+            if new_list is not None: scope_data['urls'] = new_list
+        elif action.startswith("Manage excluded extensions"):
+            new_list = _edit_string_list_interactive(scope_data.get('exclude_extensions', []), "extension", console)
+            if new_list is not None: scope_data['exclude_extensions'] = new_list
+
 def _run_scope_management_tui(scopes, scopes_file_path, console):
     """A sub-TUI for managing scopes, reusing the core handler logic."""
     try:
@@ -161,28 +278,54 @@ def _run_scope_management_tui(scopes, scopes_file_path, console):
     console.print("\n--- Scope Management ---", style="bold yellow")
     while True:
         try:
-            action_q = {"type": "list", "name": "action", "message": "Select an action:", "choices": ["List scopes", "Show a scope", "Add a scope", "Remove a scope", "Back to agent"], "border": True, "cycle": False}
+            choices = ["List scopes", "Show a scope", "Add a new scope", "Update a scope", "Remove a scope", "Back to agent"]
+            action_q = {"type": "list", "name": "action", "message": "Select an action:", "choices": choices, "border": True, "cycle": False}
             result = prompt([action_q])
             action = result.get("action") if result else "Back to agent"
             if action == "Back to agent": break
 
-            action_args = argparse.Namespace(list_scopes=False, show_scope=None, add_scope=None, remove_scope=None)
-            if action == "List scopes": action_args.list_scopes = True
-            elif action in ["Show a scope", "Remove a scope"]:
-                if not scopes: console.print("No scopes found.", style="yellow"); continue
-                scope_q = {"type": "fuzzy", "name": "scope", "message": f"Which scope to {action.lower().split()[0]}?", "choices": sorted(scopes.keys())}
+            if action == "List scopes":
+                handle_scope_management(argparse.Namespace(list_scopes=True), scopes, scopes_file_path, None)
+            
+            elif action == "Show a scope":
+                if not scopes: console.print("No scopes to show.", style="yellow"); continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to show?", "choices": sorted(scopes.keys())}
                 scope_r = prompt([scope_q])
                 if scope_r and scope_r.get("scope"):
-                    if action == "Show a scope": action_args.show_scope = scope_r.get("scope")
-                    else: action_args.remove_scope = scope_r.get("scope")
-                else: continue
-            elif action == "Add a scope":
-                scope_q = {"type": "input", "name": "scope", "message": "Name for new scope:", "validate": EmptyInputValidator()}
-                scope_r = prompt([scope_q])
-                if scope_r and scope_r.get("scope"): action_args.add_scope = scope_r.get("scope")
-                else: continue
+                    handle_scope_management(argparse.Namespace(show_scope=scope_r.get("scope")), scopes, scopes_file_path, None)
             
-            handle_scope_management(action_args, scopes, scopes_file_path, None)
+            elif action == "Remove a scope":
+                if not scopes: console.print("No scopes to remove.", style="yellow"); continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to remove?", "choices": sorted(scopes.keys())}
+                scope_r = prompt([scope_q])
+                if scope_r and scope_r.get("scope"):
+                    handle_scope_management(argparse.Namespace(remove_scope=scope_r.get("scope")), scopes, scopes_file_path, None)
+            
+            elif action == "Add a new scope":
+                name_q = {"type": "input", "name": "name", "message": "Enter name for the new scope:", "validate": EmptyInputValidator()}
+                name_r = prompt([name_q])
+                scope_name = name_r.get("name") if name_r else None
+                if not scope_name: continue
+                if scope_name in scopes: console.print(f"❌ Scope '{scope_name}' already exists.", style="red"); continue
+                
+                new_scope_data = _interactive_scope_editor(console, existing_scope=None)
+                if new_scope_data:
+                    scopes[scope_name] = new_scope_data
+                    write_scopes_to_file(scopes_file_path, scopes)
+                    console.print(f"✅ Scope '{scope_name}' created.", style="green")
+
+            elif action == "Update a scope":
+                if not scopes: console.print("No scopes to update.", style="yellow"); continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to update?", "choices": sorted(scopes.keys())}
+                scope_r = prompt([scope_q])
+                scope_name = scope_r.get("scope") if scope_r else None
+                if not scope_name: continue
+                
+                updated_scope_data = _interactive_scope_editor(console, existing_scope=scopes[scope_name])
+                if updated_scope_data:
+                    scopes[scope_name] = updated_scope_data
+                    write_scopes_to_file(scopes_file_path, scopes)
+                    console.print(f"✅ Scope '{scope_name}' updated.", style="green")
 
         except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
     console.print("\n--- Returning to Agent ---", style="bold yellow")

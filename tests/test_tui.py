@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 import sys
 import os
 from pathlib import Path
@@ -11,6 +11,9 @@ pytest.importorskip("InquirerPy")
 
 from patchllm.cli.entrypoint import main
 from patchllm.agent.session import AgentSession
+from patchllm.tui.interface import _run_scope_management_tui, _interactive_scope_editor, _edit_string_list_interactive, _edit_patterns_interactive
+from patchllm.utils import write_scopes_to_file, load_from_py_file
+from rich.console import Console
 
 @pytest.fixture
 def mock_args():
@@ -190,3 +193,81 @@ def test_tui_show_commands(mock_prompt, mock_agent_session, temp_project, capsys
     
     captured = capsys.readouterr()
     assert expected_output in captured.out
+
+# --- Tests for Interactive Scope Editor ---
+
+@patch('InquirerPy.prompt')
+@patch('patchllm.tui.interface._interactive_scope_editor')
+def test_scope_management_tui_add_flow(mock_scope_editor, mock_inquirer_prompt, tmp_path):
+    scopes_file = tmp_path / "scopes.py"
+    write_scopes_to_file(scopes_file, {})
+    
+    # Simulate user choosing "Add", typing a name, and then the editor returns a new scope
+    mock_inquirer_prompt.side_effect = [
+        {"action": "Add a new scope"},
+        {"name": "my-new-scope"},
+        {"action": "Back to agent"} # To exit the loop
+    ]
+    mock_scope_editor.return_value = {"path": "src", "include_patterns": ["**/*.js"]}
+    
+    _run_scope_management_tui({}, scopes_file, Console())
+    
+    mock_scope_editor.assert_called_once()
+    loaded_scopes = load_from_py_file(scopes_file, "scopes")
+    assert "my-new-scope" in loaded_scopes
+    assert loaded_scopes["my-new-scope"]["path"] == "src"
+
+@patch('InquirerPy.prompt')
+@patch('patchllm.tui.interface._interactive_scope_editor')
+def test_scope_management_tui_update_flow(mock_scope_editor, mock_inquirer_prompt, tmp_path):
+    scopes_file = tmp_path / "scopes.py"
+    initial_scopes = {"existing-scope": {"path": "old/path"}}
+    write_scopes_to_file(scopes_file, initial_scopes)
+    
+    # Simulate user choosing "Update", selecting the scope, and editor returning a modified scope
+    mock_inquirer_prompt.side_effect = [
+        {"action": "Update a scope"},
+        {"scope": "existing-scope"},
+        {"action": "Back to agent"}
+    ]
+    mock_scope_editor.return_value = {"path": "new/path"}
+    
+    _run_scope_management_tui(initial_scopes, scopes_file, Console())
+    
+    mock_scope_editor.assert_called_once_with(ANY, existing_scope={"path": "old/path"})
+    loaded_scopes = load_from_py_file(scopes_file, "scopes")
+    assert loaded_scopes["existing-scope"]["path"] == "new/path"
+
+@patch('patchllm.tui.interface.select_files_interactively')
+@patch('InquirerPy.prompt')
+def test_edit_patterns_interactive_with_selector(mock_inquirer_prompt, mock_selector, tmp_path):
+    os.chdir(tmp_path)
+    # Simulate user choosing the interactive selector, then done
+    mock_inquirer_prompt.side_effect = [
+        {"action": "Add from interactive selector"},
+        {"action": "Done"}
+    ]
+    mock_selector.return_value = [Path(tmp_path / "src/app.py"), Path(tmp_path / "README.md")]
+    
+    result = _edit_patterns_interactive([], "Include", Console())
+    
+    mock_selector.assert_called_once()
+    assert "src/app.py" in result
+    assert "README.md" in result
+    assert len(result) == 2
+
+@patch('InquirerPy.prompt')
+def test_edit_string_list_interactive_add_and_remove(mock_inquirer_prompt):
+    # Simulate: 1. Add item "c". 2. Remove items "a". 3. Done.
+    mock_inquirer_prompt.side_effect = [
+        {"action": "Add a keyword"},
+        {"item": "c"},
+        {"action": "Remove a keyword"},
+        {"items": ["a"]},
+        {"action": "Done"}
+    ]
+    
+    initial_list = ["a", "b"]
+    result = _edit_string_list_interactive(initial_list, "keyword", Console())
+    
+    assert result == ["b", "c"]
