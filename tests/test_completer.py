@@ -1,36 +1,55 @@
 import pytest
 from prompt_toolkit.document import Document
+from prompt_toolkit.completion import Completion
+# --- FIX: Import the necessary helper function ---
+from prompt_toolkit.formatted_text import to_plain_text
 
 # This import will only work if prompt_toolkit is installed
 pytest.importorskip("prompt_toolkit")
 
-from patchllm.tui.completer import PatchLLMCompleter
+from patchllm.tui.completer import PatchLLMCompleter, COMMAND_META
 
 @pytest.fixture
 def completer():
     """Provides a PatchLLMCompleter instance with mock data."""
-    mock_commands = ["/task", "/plan", "/context", "/clear_context", "/skip"]
+    mock_commands = list(COMMAND_META.keys())
     mock_scopes = {"base": {}, "js_files": {}}
     return PatchLLMCompleter(mock_commands, mock_scopes)
 
-def test_command_completion(completer):
-    """Tests that commands starting with '/' are completed correctly."""
+def test_command_completion_with_meta(completer):
+    """Tests that commands are completed with the correct descriptive metadata."""
     doc = Document("/c")
     completions = list(completer.get_completions(doc, None))
-    completion_texts = {c.text for c in completions}
     
-    assert "/context" in completion_texts
-    assert "/clear_context" in completion_texts
-    assert "/task" not in completion_texts
+    # Find the completion for /context
+    context_completion = next((c for c in completions if c.text == '/context'), None)
+    assert context_completion is not None
+    # --- FIX: Use to_plain_text for correct string conversion ---
+    assert to_plain_text(context_completion.display_meta) == COMMAND_META['/context']
 
-def test_scope_completion(completer):
-    """Tests that scopes are completed after a context command."""
+    # Find the completion for /clear_context
+    clear_completion = next((c for c in completions if c.text == '/clear_context'), None)
+    assert clear_completion is not None
+    # --- FIX: Use to_plain_text for correct string conversion ---
+    assert to_plain_text(clear_completion.display_meta) == COMMAND_META['/clear_context']
+
+def test_scope_completion_with_meta(completer):
+    """Tests that scopes are completed with metadata distinguishing static vs dynamic."""
     doc = Document("/context @git:s")
     completions = list(completer.get_completions(doc, None))
-    completion_texts = {c.text for c in completions}
+    
+    staged_completion = next((c for c in completions if c.text == '@git:staged'), None)
+    assert staged_completion is not None
+    # --- FIX: Use to_plain_text for correct string conversion ---
+    assert to_plain_text(staged_completion.display_meta) == "Dynamic scope"
 
-    assert "@git:staged" in completion_texts
-    assert "base" not in completion_texts
+    doc_base = Document("/context ba")
+    completions_base = list(completer.get_completions(doc_base, None))
+    base_completion = next((c for c in completions_base if c.text == 'base'), None)
+    assert base_completion is not None
+    # --- FIX: Use to_plain_text for correct string conversion ---
+    assert to_plain_text(base_completion.display_meta) == "Static scope"
+
 
 def test_scope_completion_after_space(completer):
     """Tests that all scopes are suggested after a space."""
