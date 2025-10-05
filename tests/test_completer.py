@@ -1,82 +1,93 @@
 import pytest
 from prompt_toolkit.document import Document
 from prompt_toolkit.completion import Completion
-# --- FIX: Import the necessary helper function ---
 from prompt_toolkit.formatted_text import to_plain_text
 
 # This import will only work if prompt_toolkit is installed
 pytest.importorskip("prompt_toolkit")
 
-from patchllm.tui.completer import PatchLLMCompleter, COMMAND_META
+from patchllm.tui.completer import PatchLLMCompleter
 
 @pytest.fixture
 def completer():
     """Provides a PatchLLMCompleter instance with mock data."""
-    mock_commands = list(COMMAND_META.keys())
     mock_scopes = {"base": {}, "js_files": {}}
-    return PatchLLMCompleter(mock_commands, mock_scopes)
+    return PatchLLMCompleter(mock_scopes)
 
-def test_command_completion_with_meta(completer):
-    """Tests that commands are completed with the correct descriptive metadata."""
-    doc = Document("/c")
+def test_initial_state_completions(completer):
+    """Tests that only valid initial commands are shown when no goal or plan exists."""
+    completer.set_session_state(has_goal=False, has_plan=False, has_pending_changes=False)
+    doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
-    # Find the completion for /context
-    context_completion = next((c for c in completions if c.text == '/context'), None)
-    assert context_completion is not None
-    # --- FIX: Use to_plain_text for correct string conversion ---
-    assert to_plain_text(context_completion.display_meta) == COMMAND_META['/context']
+    # --- FIX: Convert FormattedText to string before creating the set ---
+    completion_displays = {to_plain_text(c.display) for c in completions}
+    
+    assert "task - set goal" in completion_displays
+    assert "context - set from scope" in completion_displays
+    assert "tui - help" in completion_displays
+    # These should NOT be present in the initial state
+    assert "plan - generate or manage" not in completion_displays
+    assert "agent - run step" not in completion_displays
+    assert "agent - approve changes" not in completion_displays
 
-    # Find the completion for /clear_context
-    clear_completion = next((c for c in completions if c.text == '/clear_context'), None)
-    assert clear_completion is not None
-    # --- FIX: Use to_plain_text for correct string conversion ---
-    assert to_plain_text(clear_completion.display_meta) == COMMAND_META['/clear_context']
-
-def test_scope_completion_with_meta(completer):
-    """Tests that scopes are completed with metadata distinguishing static vs dynamic."""
-    doc = Document("/context @git:s")
+def test_has_goal_state_completions(completer):
+    """Tests that plan generation is available once a goal is set."""
+    completer.set_session_state(has_goal=True, has_plan=False, has_pending_changes=False)
+    doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
-    staged_completion = next((c for c in completions if c.text == '@git:staged'), None)
-    assert staged_completion is not None
-    # --- FIX: Use to_plain_text for correct string conversion ---
-    assert to_plain_text(staged_completion.display_meta) == "Dynamic scope"
+    # --- FIX: Convert FormattedText to string before creating the set ---
+    completion_displays = {to_plain_text(c.display) for c in completions}
+    
+    assert "task - set goal" in completion_displays
+    assert "plan - generate or manage" in completion_displays
+    # These should NOT be present yet
+    assert "agent - run step" not in completion_displays
+    assert "plan - ask question" not in completion_displays
 
-    doc_base = Document("/context ba")
-    completions_base = list(completer.get_completions(doc_base, None))
-    base_completion = next((c for c in completions_base if c.text == 'base'), None)
-    assert base_completion is not None
-    # --- FIX: Use to_plain_text for correct string conversion ---
-    assert to_plain_text(base_completion.display_meta) == "Static scope"
-
-
-def test_scope_completion_after_space(completer):
-    """Tests that all scopes are suggested after a space."""
-    doc = Document("/add_context ")
+def test_has_plan_state_completions(completer):
+    """Tests that plan-related and execution commands are available once a plan exists."""
+    completer.set_session_state(has_goal=True, has_plan=True, has_pending_changes=False)
+    doc = Document("/")
     completions = list(completer.get_completions(doc, None))
-    # Should suggest all scopes
-    assert len(completions) == len(completer.all_scopes)
+    
+    # --- FIX: Convert FormattedText to string before creating the set ---
+    completion_displays = {to_plain_text(c.display) for c in completions}
+    
+    assert "agent - run step" in completion_displays
+    assert "agent - skip step" in completion_displays
+    assert "plan - ask question" in completion_displays
+    assert "plan - refine with feedback" in completion_displays
+    # This should NOT be present
+    assert "agent - approve changes" not in completion_displays
 
-def test_plan_sub_command_completion_after_space(completer):
-    """Tests that plan sub-commands are suggested after '/plan '."""
-    doc = Document("/plan ")
+def test_pending_changes_state_completions(completer):
+    """Tests that approval/diff commands are available only after a run."""
+    completer.set_session_state(has_goal=True, has_plan=True, has_pending_changes=True)
+    doc = Document("/")
     completions = list(completer.get_completions(doc, None))
-    completion_texts = {c.text for c in completions}
-    assert "--edit " in completion_texts
-    assert "--rm " in completion_texts
-    assert "--add " in completion_texts
+    
+    # --- FIX: Convert FormattedText to string before creating the set ---
+    completion_displays = {to_plain_text(c.display) for c in completions}
+    
+    # All previous commands should still be there
+    assert "agent - run step" in completion_displays
+    # The new commands should now be available
+    assert "agent - approve changes" in completion_displays
+    assert "agent - view diff" in completion_displays
+    assert "agent - retry with feedback" in completion_displays
 
-def test_plan_sub_command_completion_typing(completer):
-    """Tests partial completion of a plan sub-command."""
-    doc = Document("/plan --e")
+def test_completion_object_structure(completer):
+    """Tests that the completion object has the correct text, display, and meta."""
+    completer.set_session_state(has_goal=False, has_plan=False, has_pending_changes=False)
+    doc = Document("/task")
     completions = list(completer.get_completions(doc, None))
-    completion_texts = {c.text for c in completions}
-    assert "--edit " in completion_texts
-    assert len(completions) == 1
-
-def test_no_completion_for_irrelevant_text(completer):
-    """Tests that no completions are offered for arbitrary text."""
-    doc = Document("hello world")
-    completions = list(completer.get_completions(doc, None))
-    assert len(completions) == 0
+    
+    task_completion = next((c for c in completions if c.text == '/task'), None)
+    
+    assert task_completion is not None
+    assert task_completion.text == "/task"
+    # --- FIX: Convert FormattedText to string before assertion ---
+    assert to_plain_text(task_completion.display) == "task - set goal"
+    assert to_plain_text(task_completion.display_meta) == "Sets the high-level goal for the agent."

@@ -200,13 +200,20 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             except Exception as e: console.print(f"⚠️ Could not resume session: {e}", style="yellow"); _clear_session()
         else: _clear_session()
 
-    completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff", "/skip", "/settings", "/ask", "/refine"], scopes=session.scopes)
+    completer = PatchLLMCompleter(scopes=session.scopes)
     prompt_session = PromptSession(history=FileHistory(Path("~/.patchllm_history").expanduser()))
 
     console.print("🤖 Welcome to the PatchLLM Agent. Type `/` and [TAB] for commands. `/exit` to quit.", style="bold blue")
 
     try:
         while True:
+            # Update the completer's state before showing the prompt
+            completer.set_session_state(
+                has_goal=bool(session.goal),
+                has_plan=bool(session.plan),
+                has_pending_changes=bool(session.last_execution_result)
+            )
+            
             text = prompt_session.prompt(">>> ", completer=FuzzyCompleter(completer)).strip()
             if not text: continue
             
@@ -324,7 +331,7 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             elif command == '/scopes':
                 _run_scope_management_tui(session.scopes, scopes_file_path, console)
                 session.reload_scopes(scopes_file_path)
-                completer.all_scopes = sorted(list(session.scopes.keys()) + completer.dynamic_scopes)
+                # No longer need to update completer scopes here, it's static
             
             elif command == '/settings':
                 _run_settings_tui(session, console)
