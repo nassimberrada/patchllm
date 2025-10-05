@@ -6,6 +6,8 @@ from pathlib import Path
 
 # This import will only work if prompt_toolkit is installed
 pytest.importorskip("prompt_toolkit")
+# Add skip for the new dependency to avoid errors if not installed
+pytest.importorskip("InquirerPy")
 
 from patchllm.cli.entrypoint import main
 from patchllm.agent.session import AgentSession
@@ -13,7 +15,11 @@ from patchllm.agent.session import AgentSession
 @pytest.fixture
 def mock_args():
     """Provides a mock argparse.Namespace object for tests."""
-    return MagicMock()
+    # Use a real object that can have attributes set
+    class MockArgs:
+        def __init__(self):
+            self.model = "default-model"
+    return MockArgs()
 
 def test_agent_session_initialization(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
@@ -44,6 +50,7 @@ def test_tui_help_command(mock_prompt, temp_project, capsys):
     assert "/context <scope>" in captured.out
     assert "/plan --edit <N> <text>" in captured.out
     assert "/skip" in captured.out
+    assert "/settings" in captured.out
 
 @patch('patchllm.tui.interface.AgentSession')
 @patch('prompt_toolkit.PromptSession.prompt')
@@ -55,6 +62,41 @@ def test_tui_context_command_calls_session(mock_prompt, mock_agent_session, temp
     with patch.object(sys, 'argv', ['patchllm']):
         main()
     mock_session_instance.load_context_from_scope.assert_called_once_with("my_scope")
+
+@patch('patchllm.tui.interface._run_settings_tui')
+@patch('prompt_toolkit.PromptSession.prompt')
+def test_tui_settings_command(mock_prompt, mock_settings_tui, temp_project):
+    os.chdir(temp_project)
+    mock_prompt.side_effect = ["/settings", "/exit"]
+    with patch.object(sys, 'argv', ['patchllm']):
+        main()
+    # The TUI loop calls the settings function with the session and console objects
+    mock_settings_tui.assert_called_once()
+
+
+@patch('InquirerPy.prompt')
+@patch('patchllm.tui.interface.AgentSession')
+def test_tui_settings_change_model_flow(mock_agent_session, mock_inquirer_prompt, temp_project):
+    os.chdir(temp_project)
+    mock_session_instance = mock_agent_session.return_value
+    
+    # Simulate the sequence of choices in the settings TUI
+    mock_inquirer_prompt.side_effect = [
+        {"action": f"Change Model (current: {mock_session_instance.args.model})"},
+        {"model": "ollama/test-model"},
+        {"action": "Back to agent"}
+    ]
+    
+    with patch('patchllm.tui.interface.model_list', ['ollama/test-model', 'gemini/flash']):
+        # We call the function directly to test its internal logic
+        from patchllm.tui.interface import _run_settings_tui, Console
+        _run_settings_tui(mock_session_instance, Console())
+
+    # Check that the session's model was updated
+    assert mock_session_instance.args.model == "ollama/test-model"
+    # Check that the change was persisted
+    mock_session_instance.save_settings.assert_called_once()
+
 
 @patch('patchllm.tui.interface.AgentSession')
 @patch('prompt_toolkit.PromptSession.prompt')

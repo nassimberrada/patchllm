@@ -1,14 +1,44 @@
 import pytest
 from pathlib import Path
 import os
+import json
 from unittest.mock import patch, MagicMock
 
-from patchllm.agent.session import AgentSession
+from patchllm.agent.session import AgentSession, CONFIG_FILE_PATH
 from patchllm.utils import load_from_py_file
 
 @pytest.fixture
 def mock_args():
-    return MagicMock(model="mock-model")
+    # Use a real object that can have attributes set
+    class MockArgs:
+        def __init__(self, model):
+            self.model = model
+    return MockArgs(model="default-model")
+
+def test_session_load_and_save_settings(mock_args, tmp_path):
+    os.chdir(tmp_path)
+    # 1. Test saving settings
+    session1 = AgentSession(args=mock_args, scopes={}, recipes={})
+    session1.args.model = "new-saved-model"
+    session1.save_settings()
+    
+    assert CONFIG_FILE_PATH.exists()
+    with open(CONFIG_FILE_PATH, 'r') as f:
+        data = json.load(f)
+    assert data['model'] == "new-saved-model"
+
+    # 2. Test loading settings on init
+    # The new session should ignore the mock_args 'default-model' and load from the file
+    session2 = AgentSession(args=mock_args, scopes={}, recipes={})
+    assert session2.args.model == "new-saved-model"
+
+    # 3. Test that initialization with no config file uses default args
+    CONFIG_FILE_PATH.unlink()
+    # --- FIX: Reset the mock_args object to its original state ---
+    mock_args.model = "default-model" 
+    session3 = AgentSession(args=mock_args, scopes={}, recipes={})
+    assert session3.args.model == "default-model"
+
 
 def test_session_edit_plan_step(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})

@@ -11,6 +11,7 @@ import re
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.completion import FuzzyCompleter
+from litellm import model_list
 
 from .completer import PatchLLMCompleter
 from ..agent.session import AgentSession
@@ -46,6 +47,7 @@ def _print_help():
     help_text.append("  /test\n", style="bold"); help_text.append("          ↳ Run pytest to check for regressions.\n")
     help_text.append("  /stage\n", style="bold"); help_text.append("         ↳ Stage all current changes with git.\n\n")
     help_text.append("General:\n", style="bold cyan")
+    help_text.append("  /settings\n", style="bold"); help_text.append("      ↳ Configure the model and API keys.\n")
     help_text.append("  /help\n", style="bold"); help_text.append("          ↳ Shows this help message.\n")
     help_text.append("  /exit\n", style="bold"); help_text.append("          ↳ Exits the agent session.\n")
     return Panel(help_text, title="Help", border_style="green")
@@ -72,6 +74,79 @@ def _save_session(session: AgentSession):
 
 def _clear_session():
     if SESSION_FILE_PATH.exists(): os.remove(SESSION_FILE_PATH)
+
+def _run_settings_tui(session: AgentSession, console: Console):
+    """A sub-TUI for managing agent settings."""
+    try:
+        from InquirerPy import prompt
+        from InquirerPy.exceptions import InvalidArgument
+    except ImportError:
+        console.print("❌ 'InquirerPy' is required. `pip install 'patchllm[interactive]'`", style="red"); return
+
+    console.print("\n--- Agent Settings ---", style="bold yellow")
+    while True:
+        try:
+            current_model = session.args.model
+            action_q = {
+                "type": "list", 
+                "name": "action", 
+                "message": "Select a setting to configure:", 
+                "choices": [
+                    f"Change Model (current: {current_model})", 
+                    "Set API Key (for this session)",
+                    "Back to agent"
+                ], 
+                "border": True, "cycle": False
+            }
+            result = prompt([action_q])
+            action = result.get("action") if result else "Back to agent"
+            
+            if action == "Back to agent": break
+
+            if action.startswith("Change Model"):
+                model_q = {
+                    "type": "fuzzy", 
+                    "name": "model", 
+                    "message": "Fuzzy search for a model:",
+                    "choices": model_list,
+                    "default": current_model
+                }
+                model_r = prompt([model_q])
+                new_model = model_r.get("model") if model_r else None
+                if new_model:
+                    session.args.model = new_model
+                    session.save_settings()
+                    console.print(f"✅ Default model set to '[bold]{new_model}[/bold]'. This will be saved.", style="green")
+
+            elif action.startswith("Set API Key"):
+                service_q = {
+                    "type": "list", "name": "service",
+                    "message": "Which API key do you want to set?",
+                    "choices": ["OPENAI", "GEMINI", "ANTHROPIC", "COHERE", "GROQ", "Custom..."]
+                }
+                service_r = prompt([service_q])
+                service = service_r.get("service") if service_r else None
+                if not service: continue
+
+                env_var_name = f"{service.upper()}_API_KEY"
+                if service == "Custom...":
+                    env_var_q = {"type": "input", "name": "env_var", "message": "Enter the environment variable name (e.g., MISTRAL_API_KEY):"}
+                    env_var_r = prompt([env_var_q])
+                    env_var_name = env_var_r.get("env_var") if env_var_r else None
+                
+                if not env_var_name: continue
+
+                key_q = {"type": "password", "name": "key", "message": f"Enter the value for {env_var_name}:"}
+                key_r = prompt([key_q])
+                api_key = key_r.get("key") if key_r else None
+
+                if api_key:
+                    os.environ[env_var_name] = api_key
+                    console.print(f"✅ '{env_var_name}' set for the current session.", style="green")
+                    console.print("⚠️  This key is not saved and will be forgotten when you exit.", style="yellow")
+
+        except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
+    console.print("\n--- Returning to Agent ---", style="bold yellow")
 
 def _run_scope_management_tui(scopes, scopes_file_path, console):
     """A sub-TUI for managing scopes, reusing the core handler logic."""
@@ -123,7 +198,7 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             except Exception as e: console.print(f"⚠️ Could not resume session: {e}", style="yellow"); _clear_session()
         else: _clear_session()
 
-    completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff", "/skip"], scopes=session.scopes)
+    completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff", "/skip", "/settings"], scopes=session.scopes)
     prompt_session = PromptSession(history=FileHistory(Path("~/.patchllm_history").expanduser()))
 
     console.print("🤖 Welcome to the PatchLLM Agent. Type `/` and [TAB] for commands. `/exit` to quit.", style="bold blue")
@@ -231,6 +306,9 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 session.reload_scopes(scopes_file_path)
                 completer.all_scopes = sorted(list(session.scopes.keys()) + completer.dynamic_scopes)
             
+            elif command == '/settings':
+                _run_settings_tui(session, console)
+
             elif command == '/test': actions.run_tests()
             elif command == '/stage': actions.stage_files()
             

@@ -1,8 +1,11 @@
 from pathlib import Path
 import json
+import os
 
 # Only import what's needed for initialization at the top level.
 from ..cli.helpers import get_system_prompt
+
+CONFIG_FILE_PATH = Path(".patchllm_config.json")
 
 class AgentSession:
     """
@@ -19,6 +22,30 @@ class AgentSession:
         self.scopes = scopes
         self.recipes = recipes
         self.last_execution_result: dict | None = None
+        self.load_settings()
+
+    def load_settings(self):
+        """Loads settings from the config file and applies them."""
+        if CONFIG_FILE_PATH.exists():
+            try:
+                with open(CONFIG_FILE_PATH, 'r') as f:
+                    settings = json.load(f)
+                
+                # The config file overrides the initial default args
+                if 'model' in settings:
+                    self.args.model = settings['model']
+
+            except (json.JSONDecodeError, IOError):
+                # Ignore if the file is corrupted or unreadable
+                pass
+
+    def save_settings(self):
+        """Saves current settings to the config file."""
+        settings_to_save = {
+            'model': self.args.model
+        }
+        with open(CONFIG_FILE_PATH, 'w') as f:
+            json.dump(settings_to_save, f, indent=2)
 
     def to_dict(self) -> dict:
         """Serializes the session's state to a dictionary."""
