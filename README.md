@@ -7,105 +7,97 @@
 </p>
 
 ## About
-PatchLLM is a command-line tool that lets you flexibly build LLM context from your codebase, provide instructions, and automatically apply file edits directly from the LLM's response.
+PatchLLM is an interactive command-line agent that helps you modify your codebase. It uses an LLM to plan and execute changes, allowing you to review and approve every step.
+
+## Key Features
+- **Interactive Planning:** The agent proposes a step-by-step plan before writing any code. You stay in control.
+- **Dynamic Context:** Build and modify the code context on-the-fly using powerful scope definitions (`@git:staged`, `@dir:src`, etc.).
+- **Mobile-First TUI:** A clean, command-driven interface with autocompletion makes it easy to use on any device.
+- **Resilient Sessions:** Automatically saves your progress so you can resume if you get disconnected.
 
 ## Getting Started
 
-**1. Initialize a configuration file:**
-This creates a `scopes.py` file to define file collections.
+**1. Initialize a configuration file (optional):**
+This creates a `scopes.py` file to define reusable file collections.
 ```bash
 patchllm --init
 ```
 
-**2. (Optional) Create a recipe file:**
-Create a `recipes.py` for reusable tasks.
-```python
-# recipes.py
-recipes = {
-    "add_tests": "Write comprehensive pytest unit tests for the provided code. Mock any external dependencies.",
-    "refactor_dry": "Refactor the code to improve readability and reduce duplication (DRY principle).",
-    "add_docs": "Generate Google-style docstrings for all public functions and classes."
-}
+**2. Start the Agent:**
+Running `patchllm` with no arguments drops you into the interactive agentic TUI.
+```bash
+patchllm
 ```
 
-**3. Run a task:**
-Combine a **scope**, a **task** (or **recipe**), and an **action** (`--patch`).
+**3. Follow the Agent Workflow:**
+Inside the TUI, you direct the agent with simple slash commands.
 
 ```bash
-# Run with an ad-hoc task
-patchllm -s default -t "Add type hints to the main function" -p
+# 1. Set the goal
+>>> /task Add a health check endpoint to the API
 
-# Run with a pre-defined recipe
-patchllm -s default -r add_docs -p
+# 2. Build the context
+>>> /context @dir:src/api
+
+# 3. Ask the agent to generate a plan
+>>> /plan
+1. Add a new route `/health` to `src/api/routes.py`.
+2. Implement the health check logic to return a 200 OK status.
+
+# 4. Execute the first step and review the proposed changes
+>>> /run
+
+# 5. If the changes look good, approve them
+>>> /approve
 ```
 
-## Modes of Operation
+## Agent Commands (TUI)
+| Command | Description |
+|---|---|
+| `/task <goal>` | Sets the high-level goal for the agent. |
+| `/plan` | Generates a step-by-step plan. |
+| `/run` | Executes the current step and shows a summary of changes. |
+| `/diff [all \| file]`| Shows the full diff for the proposed changes. |
+| `/approve` | Applies the changes from the last run. |
+| `/retry <feedback>`| Retries the last step with new feedback. |
+| `/context <scope>` | Replaces the context with files from a scope. |
+| `/add_context <scope>`| Adds files from a scope to the current context. |
+| `/scopes` | Opens an interactive menu to manage your saved scopes. |
+| `/test` | Runs `pytest` to check for regressions. |
+| `/stage` | Stages all current changes with `git`. |
+| `/patch --clipboard`| Applies a patch from the system clipboard. |
+| `/exit` | Exits the agent session. |
 
-- **Direct Mode:** The standard CLI usage shown above.
-- **Chat Mode:** A guided, conversational interface for complex changes.
-  ```bash
-  patchllm --chat
-  ```
-- **Interactive Mode:** Visually select files and folders to build the context.
-  ```bash
-  patchllm --interactive -t "My task for the selected files" -p
-  ```
+## Headless Mode Flags
+For scripting or single-shot edits, you can still use the original flags.
 
-## All Commands & Options
-
-#### **Core Actions**
 | Flag | Alias | Description |
 |---|---|---|
-| `--patch` | `-p` | **Main action:** Query the LLM and apply file changes. |
-| `--chat` | `-c` | Start an interactive chat session. |
-| `--interactive` | `-in`| Interactively select files/folders for the context. |
-
-#### **Task & Recipe Input**
-| Flag | Alias | Description |
-|---|---|---|
-| `--task "<...>" `| `-t` | Provide a specific instruction to the LLM. |
-| `--recipe <name>` | `-r` | Use a predefined task from `recipes.py`. |
-| `--voice` | `-v` | Use voice recognition for the task instruction. |
-
-#### **Scope & Context Definition**
-| Flag | Alias | Description |
-|---|---|---|
-| `--scope <name>` | `-s` | Use a static scope from `scopes.py` or a dynamic one (e.g., `@git:staged`, `@search:"term"`). |
-| `--init` | `-i` | Create a new `scopes.py` file. |
-| `--list-scopes`| `-sl`| List all available scopes. |
-| `--show-scope` | `-ss`| Display the settings for a specific scope. |
-
-#### **Input/Output**
-| Flag | Alias | Description |
-|---|---|---|
-| `--context-out` | `-co` | Export the generated context to a file (e.g., `context.md`). |
-| `--context-in` | `-ci` | Use a local context file as input. |
-| `--to-file` | `-tf` | Save LLM response to a file instead of patching. |
-| `--to-clipboard`| `-tc`| Copy LLM response to the clipboard. |
-| `--from-file` | `-ff` | Apply patches from a local file. |
-| `--from-clipboard`|`-fc`| Apply patches from the clipboard. |
-
-#### **General Options**
-| Flag | Alias | Description |
-|---|---|---|
-| `--model` | `-m` | Specify a different model (default: `gemini/gemini-1.5-flash`). |
+| `-p`, `--patch` | **Main action:** Query the LLM and apply file changes. |
+| `-t`, `--task` | Provide a specific instruction to the LLM. |
+| `-s`, `--scope` | Use a static scope from `scopes.py` or a dynamic one. |
+| `-r`, `--recipe` | Use a predefined task from `recipes.py`. |
+| `-i`, `--init` | Create a new `scopes.py` file. |
+| `-sl`, `--list-scopes`| List all available scopes. |
+| `-ff`, `--from-file` | Apply patches from a local file. |
+| `-m`, `--model` | Specify a different model (default: `gemini/gemini-1.5-flash`). |
 
 ## Setup
+PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm). Set up your API keys (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) in a `.env` file.
 
-PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm). Refer to their documentation for setting up API keys (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) in a `.env` file.
+The interactive TUI requires `prompt_toolkit` and `InquirerPy`. You can install all core dependencies with:
+```bash
+pip install -r requirements.txt
+```
 
 Optional features require extra dependencies:
 ```bash
-# For --voice
-pip install "patchllm[voice]"
-
 # For URL support in scopes
 pip install "patchllm[url]"
 
-# For --interactive and --chat modes
-pip install "patchllm[interactive]"
+# For voice commands (in headless mode)
+pip install "patchllm[voice]"
 ```
 
 ## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+This project is licensed under the MIT License.
