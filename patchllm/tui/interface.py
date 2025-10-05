@@ -48,7 +48,9 @@ def _print_help():
 def _display_execution_summary(result, console):
     if not result or not result.get("summary"):
         console.print("❌ Step failed to produce a result.", style="red"); return
-    summary, modified, created = result["summary"], result["summary"].get("modified", []), result["summary"].get("created", [])
+    summary = result["summary"]
+    modified = summary.get("modified", [])
+    created = summary.get("created", [])
     if not modified and not created:
         console.print("✅ Step finished, but no file changes were detected.", style="yellow"); return
     summary_text = Text()
@@ -66,17 +68,55 @@ def _save_session(session: AgentSession):
 def _clear_session():
     if SESSION_FILE_PATH.exists(): os.remove(SESSION_FILE_PATH)
 
+def _run_scope_management_tui(scopes, scopes_file_path, console):
+    """A sub-TUI for managing scopes, reusing the core handler logic."""
+    try:
+        from InquirerPy import prompt
+        from InquirerPy.validator import EmptyInputValidator
+        from InquirerPy.exceptions import InvalidArgument
+    except ImportError:
+        console.print("❌ 'InquirerPy' is required. `pip install 'patchllm[interactive]'`", style="red"); return
+
+    console.print("\n--- Scope Management ---", style="bold yellow")
+    while True:
+        try:
+            action_q = {"type": "list", "name": "action", "message": "Select an action:", "choices": ["List scopes", "Show a scope", "Add a scope", "Remove a scope", "Back to agent"], "border": True, "cycle": False}
+            result = prompt([action_q])
+            action = result.get("action") if result else "Back to agent"
+            if action == "Back to agent": break
+
+            action_args = argparse.Namespace(list_scopes=False, show_scope=None, add_scope=None, remove_scope=None)
+            if action == "List scopes": action_args.list_scopes = True
+            elif action in ["Show a scope", "Remove a scope"]:
+                if not scopes: console.print("No scopes found.", style="yellow"); continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": f"Which scope to {action.lower().split()[0]}?", "choices": sorted(scopes.keys())}
+                scope_r = prompt([scope_q])
+                if scope_r and scope_r.get("scope"):
+                    if action == "Show a scope": action_args.show_scope = scope_r.get("scope")
+                    else: action_args.remove_scope = scope_r.get("scope")
+                else: continue
+            elif action == "Add a scope":
+                scope_q = {"type": "input", "name": "scope", "message": "Name for new scope:", "validate": EmptyInputValidator()}
+                scope_r = prompt([scope_q])
+                if scope_r and scope_r.get("scope"): action_args.add_scope = scope_r.get("scope")
+                else: continue
+            
+            handle_scope_management(action_args, scopes, scopes_file_path, None)
+
+        except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
+    console.print("\n--- Returning to Agent ---", style="bold yellow")
+
 def run_tui(args, scopes, recipes, scopes_file_path):
     console = Console()
     session = AgentSession(args, scopes, recipes)
 
     if SESSION_FILE_PATH.exists():
-        resume = console.input(f"Found a saved session. [bold]Resume?[/bold] (Y/n) ").lower()
-        if resume in ['y', 'yes', '']:
+        if console.input("Found saved session. [bold]Resume?[/bold] (Y/n) ").lower() in ['y', 'yes', '']:
             try:
                 with open(SESSION_FILE_PATH, 'r') as f: session.from_dict(json.load(f))
                 console.print("✅ Session resumed.", style="green")
-            except Exception as e: console.print(f"⚠️  Could not resume session: {e}", style="yellow"); _clear_session()
+            except Exception as e: console.print(f"⚠️ Could not resume session: {e}", style="yellow"); _clear_session()
+        else: _clear_session()
 
     completer = PatchLLMCompleter(commands=["/task", "/plan", "/run", "/approve", "/retry", "/context", "/add_context", "/clear_context", "/scopes", "/patch", "/test", "/stage", "/help", "/exit", "/diff"], scopes=session.scopes)
     prompt_session = PromptSession(history=FileHistory(Path("~/.patchllm_history").expanduser()))
@@ -88,21 +128,18 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             text = prompt_session.prompt(">>> ", completer=FuzzyCompleter(completer)).strip()
             if not text: continue
             
-            # --- FIX: More robust command and argument parsing ---
             command, _, arg_string = text.partition(' ')
             command = command.lower()
-            # --- End FIX ---
             
             if command == '/exit': _clear_session(); break
             elif command == '/help': console.print(_print_help())
             elif command == '/task':
-                session.set_goal(arg_string); console.print(f"✅ Goal set.", style="green"); _save_session(session)
+                session.set_goal(arg_string); console.print("✅ Goal set.", style="green"); _save_session(session)
             elif command == '/plan':
                 if not session.goal: console.print("❌ No goal set.", style="red"); continue
                 with console.status("[cyan]Generating plan..."): success = session.create_plan()
                 if success:
-                    plan_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(session.plan))
-                    console.print(Panel(plan_text, title="Execution Plan", border_style="magenta")); _save_session(session)
+                    console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Execution Plan", border_style="magenta")); _save_session(session)
                 else: console.print("❌ Failed to generate a plan.", style="red")
             
             elif command == '/run':
@@ -111,20 +148,19 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 console.print(f"\n--- Executing Step {session.current_step + 1}/{len(session.plan)} ---", style="bold yellow")
                 with console.status("[cyan]Agent is working..."): result = session.run_current_step()
                 _display_execution_summary(result, console)
-                if result: console.print(f"✅ Preview ready. Use `/diff` to review.", style="green")
+                if result: console.print("✅ Preview ready. Use `/diff` to review.", style="green")
 
             elif command == '/diff':
                 if not session.last_execution_result or not session.last_execution_result.get("diffs"): console.print("❌ No diff to display.", style="red"); continue
-                diffs_to_show = session.last_execution_result["diffs"]
-                if arg_string and arg_string != 'all':
-                    diffs_to_show = [d for d in diffs_to_show if Path(d['file_path']).name == arg_string]
-                for diff in diffs_to_show: console.print(Panel(diff["diff_text"], title=f"Diff: {Path(diff['file_path']).name}", border_style="yellow"))
+                diffs = session.last_execution_result["diffs"]
+                if arg_string and arg_string != 'all': diffs = [d for d in diffs if Path(d['file_path']).name == arg_string]
+                for diff in diffs: console.print(Panel(diff["diff_text"], title=f"Diff: {Path(diff['file_path']).name}", border_style="yellow"))
 
             elif command == '/approve':
                 if not session.last_execution_result: console.print("❌ No changes to approve.", style="red"); continue
-                with console.status("[cyan]Applying changes..."): success = session.approve_changes()
+                with console.status("[cyan]Applying..."): success = session.approve_changes()
                 if success: console.print("✅ Changes applied.", style="green"); _save_session(session)
-                else: console.print("❌ Failed to apply changes.", style="red")
+                else: console.print("❌ Failed to apply.", style="red")
             
             elif command == '/retry':
                 if not session.last_execution_result: console.print("❌ Nothing to retry.", style="red"); continue
@@ -134,26 +170,24 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 _display_execution_summary(result, console)
 
             elif command == '/context':
-                with console.status("[cyan]Building context..."): summary = session.load_context_from_scope(arg_string)
-                console.print(Panel(summary, title="Context Summary", border_style="cyan", expand=False)); _save_session(session)
+                with console.status("[cyan]Building..."): summary = session.load_context_from_scope(arg_string)
+                console.print(Panel(summary, title="Context Summary", border_style="cyan")); _save_session(session)
             
             elif command == '/add_context':
                 if arg_string == '--interactive':
                     new_files = select_files_interactively(Path(".").resolve())
                     if new_files:
-                        with console.status("[cyan]Updating context..."): summary = session.add_files_and_rebuild_context(new_files)
-                        console.print(Panel(summary, title="Context Summary", border_style="cyan", expand=False)); _save_session(session)
+                        with console.status("[cyan]Updating..."): summary = session.add_files_and_rebuild_context(new_files)
+                        console.print(Panel(summary, title="Context Summary", border_style="cyan")); _save_session(session)
                 else:
-                    with console.status("[cyan]Updating context..."): summary = session.add_context_from_scope(arg_string)
-                    console.print(Panel(summary, title="Context Summary", border_style="cyan", expand=False)); _save_session(session)
+                    with console.status("[cyan]Updating..."): summary = session.add_context_from_scope(arg_string)
+                    console.print(Panel(summary, title="Context Summary", border_style="cyan")); _save_session(session)
             
             elif command == '/clear_context':
                 session.clear_context(); console.print("✅ Context cleared.", style="green"); _save_session(session)
             
             elif command == '/scopes':
-                # Reusing your original wizard logic is a great way to be robust
-                from .handlers import _wizard_manage_scopes
-                _wizard_manage_scopes(args, session.scopes, scopes_file_path, None)
+                _run_scope_management_tui(session.scopes, scopes_file_path, console)
                 session.reload_scopes(scopes_file_path)
                 completer.all_scopes = sorted(list(session.scopes.keys()) + completer.dynamic_scopes)
             
