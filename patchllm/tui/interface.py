@@ -19,6 +19,7 @@ from ..agent import actions
 from ..interactive.selector import select_files_interactively
 from ..patcher import apply_external_patch
 from ..cli.handlers import handle_scope_management
+from ..scopes.builder import helpers
 
 SESSION_FILE_PATH = Path(".patchllm_session.json")
 
@@ -46,8 +47,8 @@ def _print_help():
     help_text.append("  /clear_context\n", style="bold"); help_text.append("    ↳ Empties the context.\n")
     help_text.append("  /scopes\n", style="bold"); help_text.append("        ↳ Enter the scope management menu.\n\n")
     help_text.append("General:\n", style="bold cyan")
+    help_text.append("  /show [goal|plan|context|history]\n", style="bold"); help_text.append(" ↳ Shows session state.\n")
     help_text.append("  /settings\n", style="bold"); help_text.append("      ↳ Configure the model and API keys.\n")
-    help_text.append("  /history\n", style="bold"); help_text.append("       ↳ Shows the history of actions for this session.\n")
     help_text.append("  /help\n", style="bold"); help_text.append("          ↳ Shows this help message.\n")
     help_text.append("  /exit\n", style="bold"); help_text.append("          ↳ Exits the agent session.\n")
     return Panel(help_text, title="Help", border_style="green")
@@ -317,13 +318,26 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                     console.print("✅ Last approved changes have been reverted.", style="green"); _save_session(session)
                 else: console.print("❌ Failed to revert changes.", style="red")
 
-            elif command == '/history':
-                if not session.action_history:
-                    console.print("No actions recorded in this session yet.", style="yellow"); continue
-                history_text = Text()
-                for i, entry in enumerate(session.action_history):
-                    history_text.append(f"{i+1}. {escape(entry)}\n")
-                console.print(Panel(history_text, title="Session History", border_style="blue"))
+            elif command == '/show':
+                if arg_string == 'goal':
+                    if not session.goal: console.print("No goal set.", style="yellow")
+                    else: console.print(Panel(escape(session.goal), title="Current Goal", border_style="blue"))
+                elif arg_string == 'plan':
+                    if not session.plan: console.print("No plan exists.", style="yellow")
+                    else: console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Execution Plan", border_style="magenta"))
+                elif arg_string == 'context':
+                    if not session.context_files: console.print("Context is empty.", style="yellow")
+                    else:
+                        tree = helpers.generate_source_tree(Path(".").resolve(), session.context_files)
+                        console.print(Panel(tree, title="Context Tree", border_style="cyan"))
+                elif arg_string == 'history':
+                    if not session.action_history: console.print("No actions recorded yet.", style="yellow")
+                    else:
+                        history_text = Text()
+                        for i, entry in enumerate(session.action_history): history_text.append(f"{i+1}. {escape(entry)}\n")
+                        console.print(Panel(history_text, title="Session History", border_style="blue"))
+                else:
+                    console.print("Usage: /show [goal|plan|context|history]", style="yellow")
 
             elif command == '/context':
                 with console.status("[cyan]Building..."): summary = session.load_context_from_scope(arg_string)

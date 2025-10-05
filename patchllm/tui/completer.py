@@ -24,7 +24,7 @@ COMMAND_DEFINITIONS = [
     # TUI / Session Management
     {"command": "/exit", "display": "tui - exit session", "meta": "Exits the agent session.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/help", "display": "tui - help", "meta": "Shows the detailed help message.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/history", "display": "tui - view session history", "meta": "Shows the history of actions for this session.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/show", "display": "tui - show state", "meta": "Shows the current goal, plan, context, or history.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/scopes", "display": "tui - manage scopes", "meta": "Opens an interactive menu to manage your saved scopes.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/settings", "display": "tui - settings", "meta": "Configure the model and API keys.", "states": ["initial", "has_goal", "has_plan"]},
 ]
@@ -46,6 +46,7 @@ class PatchLLMCompleter(Completer):
         ]
         self.all_scopes = sorted(self.static_scopes + self.dynamic_scopes)
         self.plan_sub_commands = ['--edit ', '--rm ', '--add ']
+        self.show_sub_commands = ['goal', 'plan', 'context', 'history']
         
         # State flags
         self.has_goal = False
@@ -123,6 +124,20 @@ class PatchLLMCompleter(Completer):
             if word_count == 2 and not text.endswith(' '):
                 sub_cmd_to_complete = words[1]
                 for sub_cmd in self.plan_sub_commands:
+                    if sub_cmd.startswith(sub_cmd_to_complete):
+                        yield Completion(sub_cmd, start_position=-len(sub_cmd_to_complete))
+                return
+        
+        # Case 4: We are in a "show" context
+        if words and words[0] == '/show':
+            if word_count == 1 and text.endswith(' '):
+                for sub_cmd in self.show_sub_commands:
+                    yield Completion(sub_cmd, start_position=0)
+                return
+            
+            if word_count == 2 and not text.endswith(' '):
+                sub_cmd_to_complete = words[1]
+                for sub_cmd in self.show_sub_commands:
                     if sub_cmd.startswith(sub_cmd_to_complete):
                         yield Completion(sub_cmd, start_position=-len(sub_cmd_to_complete))
                 return
