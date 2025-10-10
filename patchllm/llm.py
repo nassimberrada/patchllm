@@ -18,8 +18,14 @@ def run_llm_query(messages: list[dict], model_name: str) -> str | None:
     console.print("\n--- Sending Prompt to LLM... ---", style="bold")
     
     try:
-        with console.status("[bold cyan]Waiting for LLM response..."):
-            response = litellm.completion(model=model_name, messages=messages)
+        # Using litellm's built-in retry and timeout features.
+        # This helps prevent getting stuck if the connection drops.
+        response = litellm.completion(
+            model=model_name, 
+            messages=messages,
+            timeout=60,  # 60-second timeout for the API call
+            max_retries=3  # Retry up to 3 times on failure
+        )
         
         assistant_response = response.choices[0].message.content
         if not assistant_response or not assistant_response.strip():
@@ -29,5 +35,5 @@ def run_llm_query(messages: list[dict], model_name: str) -> str | None:
         return assistant_response
     except Exception as e:
         # Using rich.print to handle complex exception objects better
-        console.print(f"❌ LLM communication error: {e}", style="bold red")
+        console.print(f"❌ LLM communication error after retries: {e}", style="bold red")
         return None
