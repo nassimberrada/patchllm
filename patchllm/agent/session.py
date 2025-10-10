@@ -24,6 +24,7 @@ class AgentSession:
         self.last_execution_result: dict | None = None
         self.action_history: list[str] = []
         self.last_revert_state: list[dict] = []
+        self.api_keys: dict = {}
         self.load_settings()
 
     def load_settings(self):
@@ -36,16 +37,34 @@ class AgentSession:
                 if 'model' in settings:
                     self.args.model = settings['model']
 
+                self.api_keys = settings.get('api_keys', {})
+                for key, value in self.api_keys.items():
+                    if key not in os.environ:
+                        os.environ[key] = value
+
             except (json.JSONDecodeError, IOError):
                 pass
 
     def save_settings(self):
         """Saves current settings to the config file."""
         settings_to_save = {
-            'model': self.args.model
+            'model': self.args.model,
+            'api_keys': self.api_keys
         }
         with open(CONFIG_FILE_PATH, 'w') as f:
             json.dump(settings_to_save, f, indent=2)
+
+    def set_api_key(self, key_name: str, key_value: str):
+        """Sets an API key, applies it to the environment, and saves it."""
+        self.api_keys[key_name] = key_value
+        os.environ[key_name] = key_value
+        self.save_settings()
+
+    def remove_api_key(self, key_name: str):
+        """Removes an API key and saves the settings."""
+        if key_name in self.api_keys:
+            del self.api_keys[key_name]
+            self.save_settings()
 
     def to_dict(self) -> dict:
         """Serializes the session's state to a dictionary."""
@@ -148,13 +167,36 @@ class AgentSession:
                 return True
         return False
 
-    def run_current_step(self, instruction_override: str | None = None) -> dict | None:
+    def run_next_step(self, instruction_override: str | None = None) -> dict | None:
         from . import executor
         
         if not self.plan or self.current_step >= len(self.plan): return None
         step_instruction = instruction_override or self.plan[self.current_step]
         result = executor.execute_step(step_instruction, self.history, self.context, self.args.model)
         if result: self.last_execution_result = result
+        return result
+
+    def run_all_remaining_steps(self) -> dict | None:
+        """Combines all remaining steps into a single execution call."""
+        from . import executor
+
+        if not self.plan or self.current_step >= len(self.plan): return None
+        
+        remaining_steps = self.plan[self.current_step:]
+        if not remaining_steps: return None
+
+        formatted_steps = "\n".join(f"{i + 1}. {step}" for i, step in enumerate(remaining_steps))
+        combined_instruction = (
+            "Please execute the following remaining steps of the plan in a single pass. "
+            "Ensure you provide the full, final content for every file you modify.\n\n"
+            f"--- Remaining Steps ---\n{formatted_steps}"
+        )
+
+        result = executor.execute_step(combined_instruction, self.history, self.context, self.args.model)
+        
+        if result:
+            self.last_execution_result = result
+            self.last_execution_result['is_multi_step'] = True 
         return result
 
     def approve_changes(self, files_to_approve: list[str]) -> bool:
@@ -186,7 +228,10 @@ class AgentSession:
         self.last_revert_state = revert_state
         
         paste_response_selectively(self.last_execution_result["llm_response"], files_to_approve)
-        self.action_history.append(f"Approved {len(files_to_approve)} file(s) for step {self.current_step + 1}.")
+        
+        is_multi_step = self.last_execution_result.get('is_multi_step', False)
+        step_log_msg = f"steps {self.current_step + 1}-{len(self.plan)}" if is_multi_step else f"step {self.current_step + 1}"
+        self.action_history.append(f"Approved {len(files_to_approve)} file(s) for {step_log_msg}.")
         
         is_full_approval = len(files_to_approve) == len(all_proposed_files)
 
@@ -195,10 +240,14 @@ class AgentSession:
             user_prompt = f"Context attached.\n\n---\n\nMy task was: {instruction_used}"
             self.history.append({"role": "user", "content": user_prompt})
             self.history.append({"role": "assistant", "content": self.last_execution_result["llm_response"]})
-            self.current_step += 1
+            
+            if is_multi_step:
+                self.current_step = len(self.plan)
+            else:
+                self.current_step += 1
+            
             self.last_execution_result = None
         else:
-            # For partial approval, we keep the last result for the retry logic
             self.last_execution_result['approved_files'] = files_to_approve
         
         return is_full_approval
@@ -230,11 +279,14 @@ class AgentSession:
         Retries the current step. If a partial approval occurred, it constructs
         a more detailed prompt informing the LLM of what was approved and rejected.
         """
+        from . import executor
+
         if self.current_step >= len(self.plan): return None 
         
-        original_instruction = self.plan[self.current_step]
+        is_multi_step = self.last_execution_result and self.last_execution_result.get('is_multi_step', False)
         
-        # Check for partial approval state
+        original_instruction = "to complete the rest of the plan" if is_multi_step else self.plan[self.current_step]
+        
         if self.last_execution_result and 'approved_files' in self.last_execution_result:
             approved = self.last_execution_result['approved_files']
             all_proposed = self.last_execution_result.get("summary", {}).get("modified", []) + \
@@ -251,13 +303,17 @@ class AgentSession:
                 f"---\n\nMy original overall instruction for this step was: {original_instruction}"
             )
         else:
-            # Standard retry flow
             refined_instruction = (
                 f"My previous attempt was not correct. Here is my feedback: {feedback}\n\n"
                 f"---\n\nMy original instruction was: {original_instruction}"
             )
             
-        return self.run_current_step(instruction_override=refined_instruction)
+        result = executor.execute_step(refined_instruction, self.history, self.context, self.args.model)
+        if result:
+            self.last_execution_result = result
+            if is_multi_step:
+                self.last_execution_result['is_multi_step'] = True
+        return result
 
     def reload_scopes(self, scopes_file_path: str):
         from ..utils import load_from_py_file

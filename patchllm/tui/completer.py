@@ -9,7 +9,7 @@ COMMAND_DEFINITIONS = [
     {"command": "/diff", "display": "agent - view diff", "meta": "Shows the full diff for the proposed changes.", "states": ["has_pending_changes"]},
     {"command": "/retry", "display": "agent - retry with feedback", "meta": "Retries the last step with new feedback.", "states": ["has_pending_changes"]},
     {"command": "/revert", "display": "agent - revert last approval", "meta": "Reverts the changes from the last /approve.", "states": ["can_revert"]},
-    {"command": "/run", "display": "agent - run step", "meta": "Executes the current plan step.", "states": ["has_plan"]},
+    {"command": "/run", "display": "agent - run step(s)", "meta": "Executes plan steps. Use '/run next' for one step.", "states": ["has_plan"]},
     {"command": "/skip", "display": "agent - skip step", "meta": "Skips the current step and moves to the next.", "states": ["has_plan"]},
     # Context Management
     {"command": "/context", "display": "context - set context", "meta": "Replaces the context with files from a scope.", "states": ["initial", "has_goal", "has_plan"]},
@@ -23,7 +23,7 @@ COMMAND_DEFINITIONS = [
     # Menu / Session Management
     {"command": "/exit", "display": "menu - exit session", "meta": "Exits the agent session.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/help", "display": "menu - help", "meta": "Shows the detailed help message.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/show", "display": "menu - show state", "meta": "Shows the current goal, plan, context, or history.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/show", "display": "menu - show state", "meta": "Shows the current goal, plan, context, history, or step.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/settings", "display": "menu - settings", "meta": "Configure the model and API keys.", "states": ["initial", "has_goal", "has_plan"]},
 ]
 
@@ -44,7 +44,7 @@ class PatchLLMCompleter(Completer):
         ]
         self.all_scopes = sorted(self.static_scopes + self.dynamic_scopes)
         self.plan_sub_commands = ['--edit ', '--rm ', '--add ']
-        self.show_sub_commands = ['goal', 'plan', 'context', 'history']
+        self.show_sub_commands = ['goal', 'plan', 'context', 'history', 'step']
         
         # State flags
         self.has_goal = False
@@ -93,8 +93,18 @@ class PatchLLMCompleter(Completer):
                         )
             return
 
+        # Special Case: We are typing after /run
+        if words and words[0] == '/run':
+            if word_count == 1 and text.endswith(' '):
+                yield Completion("next", start_position=0, display_meta="Execute only the next step.")
+                return
+            if word_count == 2 and not text.endswith(' '):
+                if "next".startswith(words[1]):
+                     yield Completion("next", start_position=-len(words[1]), display_meta="Execute only the next step.")
+                return
+
         # Case 2: We are in a "scope" context
-        if words and words[0] in ['/context']: # Removed /add_context
+        if words and words[0] in ['/context']:
             scope_to_complete = words[1] if word_count > 1 else ""
             
             if word_count == 1 and text.endswith(' '):

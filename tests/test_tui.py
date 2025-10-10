@@ -52,7 +52,7 @@ def test_tui_help_command(mock_prompt, temp_project, capsys):
     assert "/plan --edit <N> <text>" in captured.out
     assert "/skip" in captured.out
     assert "/settings" in captured.out
-    assert "/show [goal|plan|context|history]" in captured.out
+    assert "/show [goal|plan|context|history|step]" in captured.out
 
 @patch('patchllm.tui.interface.AgentSession')
 @patch('prompt_toolkit.PromptSession.prompt')

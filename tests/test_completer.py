@@ -23,11 +23,11 @@ def test_initial_state_completions(completer):
     completion_displays = {to_plain_text(c.display) for c in completions}
     
     assert "task - set goal" in completion_displays
-    assert "context - set context" in completion_displays # <-- FIX: Updated assertion
+    assert "context - set context" in completion_displays
     assert "menu - help" in completion_displays
     # These should NOT be present in the initial state
     assert "plan - generate or manage" not in completion_displays
-    assert "agent - run step" not in completion_displays
+    assert "agent - run step(s)" not in completion_displays
     assert "agent - approve changes" not in completion_displays
     assert "agent - revert last approval" not in completion_displays
 
@@ -42,7 +42,7 @@ def test_has_goal_state_completions(completer):
     assert "task - set goal" in completion_displays
     assert "plan - generate or manage" in completion_displays
     # These should NOT be present yet
-    assert "agent - run step" not in completion_displays
+    assert "agent - run step(s)" not in completion_displays
     assert "plan - ask question" not in completion_displays
 
 def test_has_plan_state_completions(completer):
@@ -53,7 +53,7 @@ def test_has_plan_state_completions(completer):
     
     completion_displays = {to_plain_text(c.display) for c in completions}
     
-    assert "agent - run step" in completion_displays
+    assert "agent - run step(s)" in completion_displays
     assert "agent - skip step" in completion_displays
     assert "plan - ask question" in completion_displays
     assert "plan - refine with feedback" in completion_displays
@@ -69,7 +69,7 @@ def test_pending_changes_state_completions(completer):
     completion_displays = {to_plain_text(c.display) for c in completions}
     
     # All previous commands should still be there
-    assert "agent - run step" in completion_displays
+    assert "agent - run step(s)" in completion_displays
     # The new commands should now be available
     assert "agent - approve changes" in completion_displays
     assert "agent - view diff" in completion_displays

@@ -37,7 +37,8 @@ def _print_help():
     help_text.append("  /plan --edit <N> <text>", style="bold"); help_text.append("\n    ↳ Edits step N of the plan.\n")
     help_text.append("  /plan --rm <N>", style="bold"); help_text.append("\n    ↳ Removes step N from the plan.\n")
     help_text.append("  /plan --add <text>", style="bold"); help_text.append("\n    ↳ Adds a new step to the end of the plan.\n")
-    help_text.append("  /run", style="bold"); help_text.append("\n    ↳ Executes the current step and shows a summary.\n")
+    help_text.append("  /run", style="bold"); help_text.append("\n    ↳ Executes all remaining steps as a single task.\n")
+    help_text.append("  /run next", style="bold"); help_text.append("\n    ↳ Executes only the next step in the plan.\n")
     help_text.append("  /skip", style="bold"); help_text.append("\n    ↳ Skips the current step.\n")
     help_text.append("  /diff [all|filename]", style="bold"); help_text.append("\n    ↳ Shows the full diff for a file or all files.\n")
     help_text.append("  /approve", style="bold"); help_text.append("\n    ↳ Interactively select and apply changes from the last run.\n")
@@ -47,7 +48,7 @@ def _print_help():
     help_text.append("  /context <scope>\n", style="bold"); help_text.append("    ↳ Sets the context using a scope (e.g., @git:staged).\n")
     help_text.append("  /scopes\n", style="bold"); help_text.append("        ↳ Opens an interactive menu to create and manage scopes.\n\n")
     help_text.append("Menu & Session:\n", style="bold cyan")
-    help_text.append("  /show [goal|plan|context|history]\n", style="bold"); help_text.append(" ↳ Shows session state.\n")
+    help_text.append("  /show [goal|plan|context|history|step]\n", style="bold"); help_text.append(" ↳ Shows session state.\n")
     help_text.append("  /settings\n", style="bold"); help_text.append("      ↳ Configure the model and API keys.\n")
     help_text.append("  /help\n", style="bold"); help_text.append("          ↳ Shows this help message.\n")
     help_text.append("  /exit\n", style="bold"); help_text.append("          ↳ Exits the agent session.\n")
@@ -81,6 +82,7 @@ def _run_settings_tui(session: AgentSession, console: Console):
     try:
         from InquirerPy import prompt
         from InquirerPy.exceptions import InvalidArgument
+        from InquirerPy.validator import EmptyInputValidator
     except ImportError:
         console.print("❌ 'InquirerPy' is required. `pip install 'patchllm[interactive]'`", style="red"); return
 
@@ -88,13 +90,14 @@ def _run_settings_tui(session: AgentSession, console: Console):
     while True:
         try:
             current_model = session.args.model
+            api_keys_count = len(session.api_keys)
             action_q = {
                 "type": "list", 
                 "name": "action", 
                 "message": "Select a setting to configure:", 
                 "choices": [
                     f"Change Model (current: {current_model})", 
-                    "Set API Key (for this session)",
+                    f"Manage API Keys ({api_keys_count} saved)",
                     "Back to agent"
                 ], 
                 "border": True, "cycle": False
@@ -119,32 +122,41 @@ def _run_settings_tui(session: AgentSession, console: Console):
                     session.save_settings()
                     console.print(f"✅ Default model set to '[bold]{new_model}[/bold]'. This will be saved.", style="green")
 
-            elif action.startswith("Set API Key"):
-                service_q = {
-                    "type": "list", "name": "service",
-                    "message": "Which API key do you want to set?",
-                    "choices": ["OPENAI", "GEMINI", "ANTHROPIC", "COHERE", "GROQ", "Custom..."]
-                }
-                service_r = prompt([service_q])
-                service = service_r.get("service") if service_r else None
-                if not service: continue
+            elif action.startswith("Manage API Keys"):
+                while True:
+                    saved_keys = list(session.api_keys.keys())
+                    key_choices = ["Add/Update a saved API Key"]
+                    if saved_keys:
+                        key_choices.append("Remove a saved API Key")
+                    key_choices.append("Back")
+                    
+                    key_action_q = {"type": "list", "name": "key_action", "message": "Manage your saved API keys", "choices": key_choices}
+                    key_action_r = prompt([key_action_q])
+                    key_action = key_action_r.get("key_action") if key_action_r else "Back"
 
-                env_var_name = f"{service.upper()}_API_KEY"
-                if service == "Custom...":
-                    env_var_q = {"type": "input", "name": "env_var", "message": "Enter the environment variable name (e.g., MISTRAL_API_KEY):"}
-                    env_var_r = prompt([env_var_q])
-                    env_var_name = env_var_r.get("env_var") if env_var_r else None
-                
-                if not env_var_name: continue
+                    if key_action == "Back": break
 
-                key_q = {"type": "password", "name": "key", "message": f"Enter the value for {env_var_name}:"}
-                key_r = prompt([key_q])
-                api_key = key_r.get("key") if key_r else None
+                    if key_action.startswith("Add/Update"):
+                        env_var_q = {"type": "input", "name": "env_var", "message": "Enter the environment variable name (e.g., OPENAI_API_KEY):", "validate": EmptyInputValidator()}
+                        env_var_r = prompt([env_var_q])
+                        env_var_name = env_var_r.get("env_var") if env_var_r else None
+                        if not env_var_name: continue
 
-                if api_key:
-                    os.environ[env_var_name] = api_key
-                    console.print(f"✅ '{env_var_name}' set for the current session.", style="green")
-                    console.print("⚠️  This key is not saved and will be forgotten when you exit.", style="yellow")
+                        key_q = {"type": "password", "name": "key", "message": f"Enter the value for {env_var_name}:"}
+                        key_r = prompt([key_q])
+                        api_key = key_r.get("key") if key_r else None
+                        if api_key:
+                            session.set_api_key(env_var_name, api_key)
+                            console.print(f"✅ Key '{env_var_name}' has been saved and applied to the current session.", style="green")
+
+                    elif key_action.startswith("Remove"):
+                        remove_q = {"type": "checkbox", "name": "keys", "message": "Select keys to remove:", "choices": saved_keys}
+                        remove_r = prompt([remove_q])
+                        keys_to_remove = remove_r.get("keys") if remove_r else []
+                        if keys_to_remove:
+                            for key in keys_to_remove:
+                                session.remove_api_key(key)
+                            console.print(f"✅ Removed {len(keys_to_remove)} key(s).", style="green")
 
         except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
     console.print("\n--- Returning to Agent ---", style="bold yellow")
@@ -516,8 +528,15 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             elif command == '/run':
                 if not session.plan: console.print("❌ No plan.", style="red"); continue
                 if session.current_step >= len(session.plan): console.print("✅ Plan complete.", style="green"); continue
-                console.print(f"\n--- Executing Step {session.current_step + 1}/{len(session.plan)} ---", style="bold yellow")
-                with console.status("[cyan]Agent is working..."): result = session.run_current_step()
+                
+                if arg_string == 'next':
+                    console.print(f"\n--- Executing Step {session.current_step + 1}/{len(session.plan)} ---", style="bold yellow")
+                    with console.status("[cyan]Agent is working..."): result = session.run_next_step()
+                else:
+                    remaining_count = len(session.plan) - session.current_step
+                    console.print(f"\n--- Executing all {remaining_count} remaining steps ---", style="bold yellow")
+                    with console.status("[cyan]Agent is working..."): result = session.run_all_remaining_steps()
+
                 _display_execution_summary(result, console)
                 if result: console.print("✅ Preview ready. Use `/diff` to review.", style="green")
 
@@ -545,7 +564,7 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                     
                     if not all_files:
                         console.print("✅ No file changes were proposed to approve.", style="yellow")
-                        session.last_execution_result = None # Clear state
+                        session.last_execution_result = None
                         continue
 
                     approve_q = {
@@ -596,6 +615,19 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 elif arg_string == 'plan':
                     if not session.plan: console.print("No plan exists.", style="yellow")
                     else: console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Execution Plan", border_style="magenta"))
+                elif arg_string == 'step':
+                    if not session.plan:
+                        console.print("No plan exists.", style="yellow")
+                    elif session.current_step >= len(session.plan):
+                        console.print("✅ Plan is complete.", style="green")
+                    else:
+                        step_text = Text()
+                        step_text.append(f"Current Step ({session.current_step + 1}/{len(session.plan)}):\n", style="bold green")
+                        step_text.append(f"  -> {escape(session.plan[session.current_step])}\n")
+                        if session.current_step + 1 < len(session.plan):
+                            step_text.append(f"\nNext Step ({session.current_step + 2}/{len(session.plan)}):\n", style="bold blue")
+                            step_text.append(f"  -> {escape(session.plan[session.current_step + 1])}")
+                        console.print(Panel(step_text, title="Current Step", border_style="magenta"))
                 elif arg_string == 'context':
                     if not session.context_files: console.print("Context is empty.", style="yellow")
                     else:
@@ -608,7 +640,7 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                         for i, entry in enumerate(session.action_history): history_text.append(f"{i+1}. {escape(entry)}\n")
                         console.print(Panel(history_text, title="Session History", border_style="blue"))
                 else:
-                    console.print("Usage: /show [goal|plan|context|history]", style="yellow")
+                    console.print("Usage: /show [goal|plan|context|history|step]", style="yellow")
 
             elif command == '/context':
                 with console.status("[cyan]Building..."): summary = session.load_context_from_scope(arg_string)
