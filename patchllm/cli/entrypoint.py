@@ -7,8 +7,7 @@ from rich.console import Console
 
 from .handlers import (
     handle_init, handle_scope_management, handle_file_io, 
-    handle_main_task_flow, handle_voice_flow, handle_chat_flow,
-    handle_interactive_wizard_flow
+    handle_main_task_flow, handle_voice_flow
 )
 from ..utils import load_from_py_file
 
@@ -34,7 +33,7 @@ def main():
 
     patch_group.add_argument(
         "-c", "--chat", action="store_true",
-        help="Start an interactive chat session to guide the patching process."
+        help="[DEPRECATED] Start the agentic TUI. This is now the default action."
     )
     patch_group.add_argument(
         "-in", "--interactive", action="store_true",
@@ -75,12 +74,11 @@ def main():
 
     args = parser.parse_args()
 
-    # Load scopes and recipes early for all flows.
     try:
         scopes = load_from_py_file(scopes_file_path, "scopes")
     except FileNotFoundError:
         scopes = {}
-        if not any([args.list_scopes, args.show_scope, args.add_scope, args.init, args.chat, len(sys.argv) == 1]):
+        if not any([args.list_scopes, args.show_scope, args.add_scope, args.init, len(sys.argv) == 1]):
              console.print(f"⚠️  Scope file '{scopes_file_path}' not found. You can create one with --init.", style="yellow")
     except Exception as e:
         console.print(f"❌ Error loading scopes file: {e}", style="red")
@@ -91,23 +89,19 @@ def main():
     except FileNotFoundError:
         recipes = {}
         if args.recipe:
-            console.print(f"⚠️  Recipes file '{recipes_file_path}' not found, but a recipe was requested.", style="yellow")
+            console.print(f"⚠️  Recipes file '{recipes_file_path}' not found.", style="yellow")
     except Exception as e:
         console.print(f"❌ Error loading recipes file: {e}", style="red")
         return
 
-    # If no arguments are provided, start the new guided interactive flow.
-    # We check for more than 1 because sys.argv[0] is the script name itself.
-    if len(sys.argv) == 1:
-        handle_interactive_wizard_flow(args, scopes, recipes, scopes_file_path, parser)
+    # If no arguments are provided (or the deprecated --chat is used), start the agentic TUI.
+    if len(sys.argv) == 1 or args.chat:
+        from ..tui.interface import run_tui
+        run_tui(args, scopes, recipes, scopes_file_path)
         return
 
     if args.init:
         handle_init(scopes_file_path)
-        return
-
-    if args.chat:
-        handle_chat_flow(args, scopes, recipes)
         return
 
     if any([args.list_scopes, args.show_scope, args.add_scope, args.remove_scope, args.update_scope]):
@@ -122,4 +116,5 @@ def main():
         handle_voice_flow(args, scopes, parser)
         return
 
+    # Fallback to the original, non-interactive workflow for other flags.
     handle_main_task_flow(args, scopes, recipes, parser)

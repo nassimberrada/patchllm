@@ -2,6 +2,9 @@ import re
 from pathlib import Path
 from rich.console import Console
 
+# --- FIX: Removed the unnecessary import that was causing the circular dependency ---
+# from patchllm.scopes.builder import build_context 
+
 from .constants import (
     STRUCTURE_EXCLUDE_DIRS, 
     DEFAULT_EXCLUDE_EXTENSIONS,

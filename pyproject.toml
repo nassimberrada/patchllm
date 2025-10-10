@@ -4,8 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patchllm"
-version = "0.2.2"
-description = "Lightweight tool to manage contexts and update code with LLMs"
+
+version = "0.2.2" 
+
+description = "An interactive agent for codebase modification using LLMs" 
 readme = "README.md"
 requires-python = ">=3.8"
 license = {file = "LICENSE"}
@@ -16,11 +18,15 @@ authors = [
 dependencies = [
     "litellm",
     "python-dotenv",
-    "rich"
+    "rich",
+    "prompt_toolkit",
+ 
+    "InquirerPy"
 ]
 
 [project.scripts]
-patchllm = "patchllm.main:main"
+
+patchllm = "patchllm.cli.entrypoint:main"
 
 [project.optional-dependencies]
 voice = [
@@ -30,10 +36,12 @@ voice = [
 url = [
     "html2text"
 ]
-interactive = [
-    "InquirerPy"
-]
 
+all = [
+    "SpeechRecognition",
+    "pyttsx3",
+    "html2text"
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

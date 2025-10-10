@@ -1,28 +1,33 @@
 import litellm
 from rich.console import Console
 
-# CORRECTED: The relative import path is now correct for this file's location.
-from .scopes.constants import DEFAULT_EXCLUDE_EXTENSIONS, STRUCTURE_EXCLUDE_DIRS
-
 console = Console()
 
-def run_llm_query(task_instructions, model_name, history, context=None):
-    """Assembles the final prompt and sends it to the LLM."""
+def run_llm_query(messages: list[dict], model_name: str) -> str | None:
+    """
+    Sends a list of messages to the LLM and returns the response.
+    This function is stateless and does not modify any history object.
+
+    Args:
+        messages (list[dict]): The full list of messages for the API call.
+        model_name (str): The name of the model to query.
+
+    Returns:
+        The text content of the assistant's response, or None if an error occurs.
+    """
     console.print("\n--- Sending Prompt to LLM... ---", style="bold")
-    final_prompt = f"{context}\n\n{task_instructions}" if context else task_instructions
-    history.append({"role": "user", "content": final_prompt})
     
     try:
         with console.status("[bold cyan]Waiting for LLM response..."):
-            response = litellm.completion(model=model_name, messages=history)
+            response = litellm.completion(model=model_name, messages=messages)
         
         assistant_response = response.choices[0].message.content
         if not assistant_response or not assistant_response.strip():
             console.print("⚠️  Response is empty.", style="yellow")
             return None
         
-        history.append({"role": "assistant", "content": assistant_response})
         return assistant_response
     except Exception as e:
-        history.pop()
-        raise RuntimeError(f"LLM communication error: {e}") from e
+        # Using rich.print to handle complex exception objects better
+        console.print(f"❌ LLM communication error: {e}", style="bold red")
+        return None

@@ -1,6 +1,7 @@
 html2text
 InquirerPy
 litellm
+prompt_toolkit
 python-dotenv
 pyttsx3
 rich
