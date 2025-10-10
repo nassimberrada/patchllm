@@ -5,10 +5,17 @@ def _get_planning_prompt(goal: str, context_tree: str) -> list[dict]:
     """Constructs the initial prompt for the planning phase."""
     
     system_prompt = (
-        "You are an expert software architect and senior developer. Your task is to create a high-level, "
-        "step-by-step plan to accomplish a user's goal. Focus on the necessary file modifications and creations. "
-        "Do not write code or implementation details. Each step should be a single, clear, actionable instruction "
-        "for a programmer to execute. The plan must be a numbered list."
+        "You are an expert software architect. Your task is to create a high-level, milestone-focused plan to "
+        "accomplish a user's goal. Break down the goal into logical, sequential steps that represent significant "
+        "pieces of functionality or architectural changes."
+        "\n\n"
+        "IMPORTANT RULES:\n"
+        "- DO NOT list individual file modifications. Instead, group related changes into a single milestone.\n"
+        "- For example, instead of a plan like '1. Add route to api.py, 2. Create logic in services.py', a better, "
+        "milestone-focused step would be '1. Implement the user authentication endpoint, including routes and server actions'.\n"
+        "- Do not write any code or implementation details in the plan.\n"
+        "- Each step should be a clear, actionable instruction for a developer.\n"
+        "- The final plan must be a numbered list."
     )
     
     user_prompt = (
