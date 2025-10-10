@@ -31,7 +31,7 @@ def _print_help():
     help_text.append("PatchLLM Agent Commands\n\n", style="bold")
     help_text.append("Agent Workflow:\n", style="bold cyan")
     help_text.append("  /task <goal>", style="bold"); help_text.append("\n    ↳ Sets the high-level goal.\n")
-    help_text.append("  /plan", style="bold"); help_text.append("\n    ↳ Generates a plan to achieve the goal.\n")
+    help_text.append("  /plan", style="bold"); help_text.append("\n    ↳ Generates a plan or opens interactive management if a plan exists.\n")
     help_text.append("  /ask <question>", style="bold"); help_text.append("\n    ↳ Ask a question about the current plan.\n")
     help_text.append("  /refine <feedback>", style="bold"); help_text.append("\n    ↳ Refine the plan with new feedback/ideas.\n")
     help_text.append("  /plan --edit <N> <text>", style="bold"); help_text.append("\n    ↳ Edits step N of the plan.\n")
@@ -330,6 +330,96 @@ def _run_scope_management_tui(scopes, scopes_file_path, console):
         except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
     console.print("\n--- Returning to Agent ---", style="bold yellow")
 
+def _run_plan_management_tui(session: AgentSession, console: Console):
+    """A sub-TUI for interactively managing the execution plan."""
+    try:
+        from InquirerPy import prompt
+        from InquirerPy.validator import EmptyInputValidator
+        from InquirerPy.exceptions import InvalidArgument
+    except ImportError:
+        console.print("❌ 'InquirerPy' is required. `pip install 'patchllm[interactive]'`", style="red"); return
+
+    console.print("\n--- Interactive Plan Management ---", style="bold yellow")
+    while True:
+        try:
+            if not session.plan:
+                console.print("The plan is now empty.", style="yellow")
+                break
+
+            choices = [f"{i+1}. {step}" for i, step in enumerate(session.plan)]
+            
+            action_q = {
+                "type": "list", "name": "action", "message": "Select a step to manage or an action:",
+                "choices": choices + ["Add a new step", "Reorder steps", "Done"],
+                "border": True, "cycle": False,
+                "long_instruction": "Use arrow keys. Select a step to Edit/Remove it."
+            }
+            result = prompt([action_q])
+            action_choice = result.get("action") if result else "Done"
+
+            if action_choice == "Done": break
+            
+            if action_choice == "Add a new step":
+                add_q = {"type": "input", "name": "text", "message": "Enter the new step instruction:", "validate": EmptyInputValidator()}
+                add_r = prompt([add_q])
+                if add_r and add_r.get("text"):
+                    session.add_plan_step(add_r.get("text"))
+                    console.print("✅ Step added to the end of the plan.", style="green")
+
+            elif action_choice == "Reorder steps":
+                if len(session.plan) < 2:
+                    console.print("⚠️ Not enough steps to reorder.", style="yellow"); continue
+                
+                reorder_choices = [f"{i+1}. {step}" for i, step in enumerate(session.plan)]
+                
+                from_q = {
+                    "type": "list", "name": "from", "message": "Select the step to move:",
+                    "choices": reorder_choices, "cycle": False
+                }
+                from_r = prompt([from_q])
+                if not from_r or not from_r.get("from"): continue
+                from_index = int(from_r.get("from").split('.')[0]) - 1
+
+                to_choices = [f"Move to position {i+1}" for i in range(len(session.plan))]
+                to_q = {
+                    "type": "list", "name": "to", "message": f"Where should '{session.plan[from_index]}' move?",
+                    "choices": to_choices, "cycle": False
+                }
+                to_r = prompt([to_q])
+                if not to_r or not to_r.get("to"): continue
+                to_index = int(re.search(r'\d+', to_r.get("to")).group()) - 1
+                
+                item_to_move = session.plan.pop(from_index)
+                session.plan.insert(to_index, item_to_move)
+                console.print(f"✅ Step moved from position {from_index + 1} to {to_index + 1}.", style="green")
+
+            else: # An existing step was selected
+                step_index = int(action_choice.split('.')[0]) - 1
+                step_text = session.plan[step_index]
+
+                edit_or_rm_q = {
+                    "type": "list", "name": "sub_action", "message": f"Step {step_index + 1}: {step_text}",
+                    "choices": ["Edit", "Remove", "Cancel"]
+                }
+                edit_or_rm_r = prompt([edit_or_rm_q])
+                sub_action = edit_or_rm_r.get("sub_action") if edit_or_rm_r else "Cancel"
+
+                if sub_action == "Edit":
+                    edit_q = {"type": "input", "name": "text", "message": "Enter the new instruction:", "default": step_text, "validate": EmptyInputValidator()}
+                    edit_r = prompt([edit_q])
+                    if edit_r and edit_r.get("text"):
+                        session.edit_plan_step(step_index + 1, edit_r.get("text"))
+                        console.print(f"✅ Step {step_index + 1} updated.", style="green")
+                
+                elif sub_action == "Remove":
+                    session.remove_plan_step(step_index + 1)
+                    console.print(f"✅ Step {step_index + 1} removed.", style="green")
+        
+        except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
+
+    _save_session(session)
+    console.print("\n--- Returning to Agent ---", style="bold yellow")
+
 def run_tui(args, scopes, recipes, scopes_file_path):
     console = Console()
     session = AgentSession(args, scopes, recipes)
@@ -349,7 +439,6 @@ def run_tui(args, scopes, recipes, scopes_file_path):
 
     try:
         while True:
-            # Update the completer's state before showing the prompt
             completer.set_session_state(
                 has_goal=bool(session.goal),
                 has_plan=bool(session.plan),
@@ -387,7 +476,15 @@ def run_tui(args, scopes, recipes, scopes_file_path):
 
             elif command == '/plan':
                 if not arg_string:
-                    if not session.goal: console.print("❌ No goal set.", style="red"); continue
+                    if not session.goal and not session.plan:
+                        console.print("❌ No goal set. Set one with `/task <your goal>`.", style="red"); continue
+                    
+                    if session.plan:
+                        _run_plan_management_tui(session, console)
+                        if session.plan:
+                            console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Current Execution Plan", border_style="magenta"))
+                        continue
+
                     with console.status("[cyan]Generating plan..."): success = session.create_plan()
                     if success:
                         console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Execution Plan", border_style="magenta")); _save_session(session)
@@ -502,7 +599,6 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             elif command == '/scopes':
                 _run_scope_management_tui(session.scopes, scopes_file_path, console)
                 session.reload_scopes(scopes_file_path)
-                # No longer need to update completer scopes here, it's static
             
             elif command == '/settings':
                 _run_settings_tui(session, console)
