@@ -2,7 +2,6 @@ from pathlib import Path
 import json
 import os
 
-# Only import what's needed for initialization at the top level.
 from ..cli.helpers import get_system_prompt
 
 CONFIG_FILE_PATH = Path(".patchllm_config.json")
@@ -34,12 +33,10 @@ class AgentSession:
                 with open(CONFIG_FILE_PATH, 'r') as f:
                     settings = json.load(f)
                 
-                # The config file overrides the initial default args
                 if 'model' in settings:
                     self.args.model = settings['model']
 
             except (json.JSONDecodeError, IOError):
-                # Ignore if the file is corrupted or unreadable
                 pass
 
     def save_settings(self):
@@ -59,7 +56,6 @@ class AgentSession:
             "context_files": [p.as_posix() for p in self.context_files],
             "action_history": self.action_history,
             "last_revert_state": self.last_revert_state,
-            # Note: We don't save planning_history to keep sessions clean.
         }
 
     def from_dict(self, data: dict):
@@ -78,12 +74,11 @@ class AgentSession:
         self.goal = goal
         self.plan = []
         self.current_step = 0
-        self.planning_history = [] # Reset planning chat on new goal
+        self.planning_history = []
         self.action_history.append(f"Goal set: {goal}")
 
     def edit_plan_step(self, step_number: int, new_instruction: str) -> bool:
         """Edits an instruction in the current plan."""
-        # step_number is 1-indexed for user-friendliness
         if 1 <= step_number <= len(self.plan):
             self.plan[step_number - 1] = new_instruction
             return True
@@ -91,10 +86,8 @@ class AgentSession:
 
     def remove_plan_step(self, step_number: int) -> bool:
         """Removes a step from the current plan."""
-        # step_number is 1-indexed
         if 1 <= step_number <= len(self.plan):
             del self.plan[step_number - 1]
-            # If we remove a step before the current one, adjust the current step index
             if step_number - 1 < self.current_step:
                 self.current_step -=1
             return True
@@ -108,7 +101,7 @@ class AgentSession:
         """Skips the current step and moves to the next one."""
         if self.current_step < len(self.plan):
             self.current_step += 1
-            self.last_execution_result = None # Clear any pending changes
+            self.last_execution_result = None
             return True
         return False
 
@@ -119,7 +112,6 @@ class AgentSession:
         if not self.goal: return False
         context_tree = helpers.generate_source_tree(Path(".").resolve(), self.context_files)
         
-        # This initializes the planning conversation
         self.planning_history, plan_response = planner.generate_plan_and_history(self.goal, context_tree, self.args.model)
         
         if plan_response:
@@ -139,7 +131,7 @@ class AgentSession:
         if response:
             self.planning_history.append({"role": "assistant", "content": response})
         else:
-            self.planning_history.pop() # Remove the user's question if the query failed
+            self.planning_history.pop()
         return response
 
     def refine_plan(self, feedback: str) -> bool:
@@ -150,7 +142,6 @@ class AgentSession:
         if new_plan_response:
             parsed_plan = planner.parse_plan_from_response(new_plan_response)
             if parsed_plan:
-                # Update history with the latest exchange
                 self.planning_history.append({"role": "user", "content": feedback})
                 self.planning_history.append({"role": "assistant", "content": new_plan_response})
                 self.plan = parsed_plan
@@ -166,38 +157,51 @@ class AgentSession:
         if result: self.last_execution_result = result
         return result
 
-    def approve_changes(self) -> bool:
-        from ..parser import paste_response, _parse_file_blocks
+    def approve_changes(self, files_to_approve: list[str]) -> bool:
+        """
+        Applies changes from the last execution, either fully or partially.
+        Returns True if all changes were applied, False otherwise.
+        """
+        from ..parser import paste_response_selectively, _parse_file_blocks
         
         if not self.last_execution_result: return False
 
+        all_proposed_files = self.last_execution_result.get("summary", {}).get("modified", []) + \
+                             self.last_execution_result.get("summary", {}).get("created", [])
+        
         revert_state = []
         parsed_blocks = _parse_file_blocks(self.last_execution_result["llm_response"])
 
-        for file_path, _ in parsed_blocks:
+        for file_path_str in files_to_approve:
+            file_path = Path(file_path_str)
             if file_path.exists():
                 try:
                     original_content = file_path.read_text(encoding="utf-8")
                     revert_state.append({"file_path": file_path.as_posix(), "content": original_content, "action": "modify"})
                 except Exception:
-                    pass # If we can't read it, we can't revert it. Skip.
+                    pass
             else:
                 revert_state.append({"file_path": file_path.as_posix(), "content": None, "action": "create"})
         
         self.last_revert_state = revert_state
         
-        instruction_used = self.last_execution_result.get("instruction", self.plan[self.current_step])
-        user_prompt = f"Context attached.\n\n---\n\nMy task was: {instruction_used}"
-        self.history.append({"role": "user", "content": user_prompt})
-        self.history.append({"role": "assistant", "content": self.last_execution_result["llm_response"]})
+        paste_response_selectively(self.last_execution_result["llm_response"], files_to_approve)
+        self.action_history.append(f"Approved {len(files_to_approve)} file(s) for step {self.current_step + 1}.")
         
-        paste_response(self.last_execution_result["llm_response"])
+        is_full_approval = len(files_to_approve) == len(all_proposed_files)
+
+        if is_full_approval:
+            instruction_used = self.last_execution_result.get("instruction", self.plan[self.current_step])
+            user_prompt = f"Context attached.\n\n---\n\nMy task was: {instruction_used}"
+            self.history.append({"role": "user", "content": user_prompt})
+            self.history.append({"role": "assistant", "content": self.last_execution_result["llm_response"]})
+            self.current_step += 1
+            self.last_execution_result = None
+        else:
+            # For partial approval, we keep the last result for the retry logic
+            self.last_execution_result['approved_files'] = files_to_approve
         
-        self.action_history.append(f"Approved changes for step {self.current_step + 1}.")
-        
-        self.current_step += 1
-        self.last_execution_result = None
-        return True
+        return is_full_approval
 
     def revert_last_approval(self) -> bool:
         """Writes the stored original content back to the files from the last approval."""
@@ -215,20 +219,44 @@ class AgentSession:
                     if file_path.exists():
                         file_path.unlink()
             except Exception as e:
-                # Log an error but continue trying to revert other files
                 print(f"Warning: Could not revert {file_path}: {e}")
         
         self.action_history.append("Reverted last approval.")
-        self.last_revert_state = [] # Clear the state so it can't be reverted twice
+        self.last_revert_state = []
         return True
 
     def retry_step(self, feedback: str) -> dict | None:
+        """
+        Retries the current step. If a partial approval occurred, it constructs
+        a more detailed prompt informing the LLM of what was approved and rejected.
+        """
         if self.current_step >= len(self.plan): return None 
+        
         original_instruction = self.plan[self.current_step]
-        refined_instruction = (
-            f"My previous attempt was not correct. Here is my feedback: {feedback}\n\n"
-            f"---\n\nMy original instruction was: {original_instruction}"
-        )
+        
+        # Check for partial approval state
+        if self.last_execution_result and 'approved_files' in self.last_execution_result:
+            approved = self.last_execution_result['approved_files']
+            all_proposed = self.last_execution_result.get("summary", {}).get("modified", []) + \
+                           self.last_execution_result.get("summary", {}).get("created", [])
+            rejected = [f for f in all_proposed if f not in approved]
+
+            refined_instruction = (
+                f"Your previous attempt was partially correct. I have **approved** the changes for the following files:\n"
+                f"- {', '.join(Path(f).name for f in approved)}\n\n"
+                f"However, I **rejected** the changes for these files:\n"
+                f"- {', '.join(Path(f).name for f in rejected)}\n\n"
+                f"Here is my feedback on the rejected files: {feedback}\n\n"
+                f"Please provide a new, corrected version of **only the rejected files** based on this feedback.\n\n"
+                f"---\n\nMy original overall instruction for this step was: {original_instruction}"
+            )
+        else:
+            # Standard retry flow
+            refined_instruction = (
+                f"My previous attempt was not correct. Here is my feedback: {feedback}\n\n"
+                f"---\n\nMy original instruction was: {original_instruction}"
+            )
+            
         return self.run_current_step(instruction_override=refined_instruction)
 
     def reload_scopes(self, scopes_file_path: str):

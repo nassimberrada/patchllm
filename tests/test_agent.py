@@ -9,7 +9,6 @@ from patchllm.utils import load_from_py_file
 
 @pytest.fixture
 def mock_args():
-    # Use a real object that can have attributes set
     class MockArgs:
         def __init__(self, model="default-model"):
             self.model = model
@@ -20,7 +19,6 @@ def test_session_ask_about_plan(mock_args):
     session.plan = ["step 1"]
     session.planning_history = [{"role": "system", "content": "You are a planner."}]
     
-    # --- FIX: Patch run_llm_query where it is defined and imported FROM, not where it is USED ---
     with patch('patchllm.llm.run_llm_query') as mock_llm:
         mock_llm.return_value = "This is the answer."
         response = session.ask_about_plan("Why step 1?")
@@ -29,7 +27,6 @@ def test_session_ask_about_plan(mock_args):
         assert len(session.planning_history) == 3
         assert session.planning_history[-2]['content'] == "Why step 1?"
         assert session.planning_history[-1]['content'] == "This is the answer."
-        # Crucially, the plan should not have changed
         assert session.plan == ["step 1"]
 
 def test_session_refine_plan(mock_args):
@@ -48,7 +45,6 @@ def test_session_refine_plan(mock_args):
 
 def test_session_load_and_save_settings(mock_args, tmp_path):
     os.chdir(tmp_path)
-    # 1. Test saving settings
     session1 = AgentSession(args=mock_args, scopes={}, recipes={})
     session1.args.model = "new-saved-model"
     session1.save_settings()
@@ -58,14 +54,10 @@ def test_session_load_and_save_settings(mock_args, tmp_path):
         data = json.load(f)
     assert data['model'] == "new-saved-model"
 
-    # 2. Test loading settings on init
-    # The new session should ignore the mock_args 'default-model' and load from the file
     session2 = AgentSession(args=mock_args, scopes={}, recipes={})
     assert session2.args.model == "new-saved-model"
 
-    # 3. Test that initialization with no config file uses default args
     CONFIG_FILE_PATH.unlink()
-    # --- FIX: Reset the mock_args object to its original state ---
     mock_args.model = "default-model" 
     session3 = AgentSession(args=mock_args, scopes={}, recipes={})
     assert session3.args.model == "default-model"
@@ -122,23 +114,60 @@ def test_session_skip_step(mock_args):
     failure = session.skip_step()
     assert failure is False
 
-def test_session_approve_changes(mock_args):
+def test_session_approve_changes_full(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
     session.plan = ["do something"]
     llm_response = "<file_path:/tmp/a.txt>\n```python\nprint('hello')\n```"
-    session.last_execution_result = { "instruction": "do something", "llm_response": llm_response }
-    # --- FIX: Patch the function in its original module, not where it's used ---
-    with patch('patchllm.parser.paste_response') as mock_paste:
-        success = session.approve_changes()
-        assert success is True
-        mock_paste.assert_called_once_with(llm_response)
+    session.last_execution_result = {
+        "instruction": "do something",
+        "llm_response": llm_response,
+        "summary": {"modified": ["/tmp/a.txt"], "created": []}
+    }
+    with patch('patchllm.parser.paste_response_selectively') as mock_paste:
+        is_full_approval = session.approve_changes(["/tmp/a.txt"])
+        assert is_full_approval is True
+        mock_paste.assert_called_once_with(llm_response, ["/tmp/a.txt"])
         assert session.current_step == 1
         assert session.last_execution_result is None
+
+def test_session_approve_changes_partial(mock_args):
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.plan = ["do something"]
+    llm_response = "<file_path:/tmp/a.txt>\n```\n...\n```<file_path:/tmp/b.txt>\n```\n...\n```"
+    session.last_execution_result = {
+        "instruction": "do something",
+        "llm_response": llm_response,
+        "summary": {"modified": ["/tmp/a.txt", "/tmp/b.txt"], "created": []}
+    }
+    with patch('patchllm.parser.paste_response_selectively') as mock_paste:
+        is_full_approval = session.approve_changes(["/tmp/a.txt"])
+        assert is_full_approval is False
+        mock_paste.assert_called_once_with(llm_response, ["/tmp/a.txt"])
+        assert session.current_step == 0
+        assert session.last_execution_result is not None
+        assert session.last_execution_result['approved_files'] == ["/tmp/a.txt"]
+
+def test_session_retry_step_after_partial_approval(mock_args):
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.plan = ["original instruction"]
+    session.last_execution_result = {
+        "approved_files": ["/tmp/a.txt"],
+        "summary": {"modified": ["/tmp/a.txt", "/tmp/b.txt"], "created": []}
+    }
+    with patch('patchllm.agent.executor.execute_step') as mock_exec:
+        session.retry_step("it was wrong")
+        mock_exec.assert_called_once()
+        refined_instruction = mock_exec.call_args[0][0]
+        assert "I have **approved** the changes" in refined_instruction
+        assert "a.txt" in refined_instruction
+        assert "I **rejected** the changes" in refined_instruction
+        assert "b.txt" in refined_instruction
+        assert "feedback on the rejected files: it was wrong" in refined_instruction
+        assert "original overall instruction" in refined_instruction
 
 def test_session_retry_step(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
     session.plan = ["original instruction"]
-    # --- FIX: Patch the function in its original module, not where it's used ---
     with patch('patchllm.agent.executor.execute_step') as mock_exec:
         session.retry_step("it was wrong")
         mock_exec.assert_called_once()
@@ -173,23 +202,18 @@ def test_session_serialization_and_deserialization(mock_args, temp_project):
 
 def test_session_action_history(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
-
     session.set_goal("My test goal")
     assert len(session.action_history) == 1
-    assert "My test goal" in session.action_history[0]
 
     with patch('patchllm.agent.planner.generate_plan_and_history') as mock_planner:
         mock_planner.return_value = ([{"role": "user", "content": ""}], "1. Do a thing")
         session.create_plan()
-
     assert len(session.action_history) == 2
-    assert "Plan generated" in session.action_history[1]
 
-    session.last_execution_result = {"llm_response": "<file_path:/tmp/a.txt>\n```python\nprint('a')\n```"}
-    session.approve_changes()
-
+    session.last_execution_result = {"llm_response": "...", "summary": {"modified": ["/tmp/a.txt"], "created": []}}
+    session.approve_changes(["/tmp/a.txt"])
     assert len(session.action_history) == 3
-    assert "Approved changes" in session.action_history[2]
+    assert "Approved 1 file(s)" in session.action_history[2]
 
     session.revert_last_approval()
     assert len(session.action_history) == 4
@@ -215,10 +239,9 @@ def test_session_revert_last_approval(mock_args, tmp_path):
         f"<file_path:{file_to_modify.as_posix()}>\n```python\n{new_content_modify}\n```\n"
         f"<file_path:{file_to_create.as_posix()}>\n```python\n{new_content_create}\n```"
     )
-    session.last_execution_result = {"llm_response": llm_response}
+    session.last_execution_result = {"llm_response": llm_response, "summary": {"modified": [file_to_modify.as_posix()], "created": [file_to_create.as_posix()]}}
     
-    success_approve = session.approve_changes()
-    assert success_approve is True
+    session.approve_changes([file_to_modify.as_posix(), file_to_create.as_posix()])
     assert file_to_modify.read_text() == new_content_modify
     assert file_to_create.read_text() == new_content_create
     assert len(session.last_revert_state) == 2

@@ -170,11 +170,14 @@ def test_tui_show_commands(mock_prompt, mock_agent_session, temp_project, capsys
     os.chdir(temp_project)
     mock_session_instance = mock_agent_session.return_value
     
+    # Set up the session state based on parametrized data
     for key, value in session_data.items():
         setattr(mock_session_instance, key, value)
     
+    # If the session state is empty, ensure the mock reflects that
     if is_empty:
         for key in session_data.keys():
+             # Handle None for goal specifically
             setattr(mock_session_instance, key, None if key == 'goal' else [])
 
     mock_prompt.side_effect = [f"/show {sub_command}", "/exit"]
@@ -192,10 +195,11 @@ def test_scope_management_tui_add_flow(mock_scope_editor, mock_inquirer_prompt, 
     scopes_file = tmp_path / "scopes.py"
     write_scopes_to_file(scopes_file, {})
     
+    # Simulate user choosing "Add", typing a name, and then the editor returns a new scope
     mock_inquirer_prompt.side_effect = [
         {"action": "Add a new scope"},
         {"name": "my-new-scope"},
-        {"action": "Back to agent"}
+        {"action": "Back to agent"} # To exit the loop
     ]
     mock_scope_editor.return_value = {"path": "src", "include_patterns": ["**/*.js"]}
     
@@ -213,6 +217,7 @@ def test_scope_management_tui_update_flow(mock_scope_editor, mock_inquirer_promp
     initial_scopes = {"existing-scope": {"path": "old/path"}}
     write_scopes_to_file(scopes_file, initial_scopes)
     
+    # Simulate user choosing "Update", selecting the scope, and editor returning a modified scope
     mock_inquirer_prompt.side_effect = [
         {"action": "Update a scope"},
         {"scope": "existing-scope"},
@@ -230,6 +235,7 @@ def test_scope_management_tui_update_flow(mock_scope_editor, mock_inquirer_promp
 @patch('InquirerPy.prompt')
 def test_edit_patterns_interactive_with_selector(mock_inquirer_prompt, mock_selector, tmp_path):
     os.chdir(tmp_path)
+    # Simulate user choosing the interactive selector, then done
     mock_inquirer_prompt.side_effect = [
         {"action": "Add from interactive selector"},
         {"action": "Done"}
@@ -245,6 +251,7 @@ def test_edit_patterns_interactive_with_selector(mock_inquirer_prompt, mock_sele
 
 @patch('InquirerPy.prompt')
 def test_edit_string_list_interactive_add_and_remove(mock_inquirer_prompt):
+    # Simulate: 1. Add item "c". 2. Remove items "a". 3. Done.
     mock_inquirer_prompt.side_effect = [
         {"action": "Add a keyword"},
         {"item": "c"},
@@ -350,3 +357,25 @@ def test_plan_management_tui_reorder_flow(mock_inquirer_prompt, mock_args, capsy
     assert session.plan == ["C", "A", "B"]
     captured = capsys.readouterr()
     assert "Step moved from position 3 to 1" in captured.out
+
+# --- Tests for Selective Approve ---
+
+@patch('InquirerPy.prompt')
+@patch('patchllm.tui.interface.AgentSession')
+@patch('prompt_toolkit.PromptSession.prompt')
+def test_tui_approve_command_interactive_selection(mock_prompt, mock_agent_session, mock_inquirer_prompt, temp_project):
+    """Tests the /approve command opens a checklist and calls session with the result."""
+    os.chdir(temp_project)
+    mock_session_instance = mock_agent_session.return_value
+    mock_session_instance.last_execution_result = {
+        "summary": {"modified": ["a.py", "b.py"], "created": []}
+    }
+    # User selects only a.py
+    mock_inquirer_prompt.return_value = {"files": ["a.py"]}
+    
+    mock_prompt.side_effect = ["/approve", "/exit"]
+    with patch.object(sys, 'argv', ['patchllm']):
+        main()
+        
+    mock_inquirer_prompt.assert_called_once()
+    mock_session_instance.approve_changes.assert_called_once_with(["a.py"])

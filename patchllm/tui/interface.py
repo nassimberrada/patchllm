@@ -40,7 +40,7 @@ def _print_help():
     help_text.append("  /run", style="bold"); help_text.append("\n    ↳ Executes the current step and shows a summary.\n")
     help_text.append("  /skip", style="bold"); help_text.append("\n    ↳ Skips the current step.\n")
     help_text.append("  /diff [all|filename]", style="bold"); help_text.append("\n    ↳ Shows the full diff for a file or all files.\n")
-    help_text.append("  /approve", style="bold"); help_text.append("\n    ↳ Applies the changes from the last run.\n")
+    help_text.append("  /approve", style="bold"); help_text.append("\n    ↳ Interactively select and apply changes from the last run.\n")
     help_text.append("  /retry <feedback>", style="bold"); help_text.append("\n    ↳ Retries the last step with new feedback.\n")
     help_text.append("  /revert", style="bold"); help_text.append("\n    ↳ Reverts the changes from the last /approve.\n\n")
     help_text.append("Context Management:\n", style="bold cyan")
@@ -393,7 +393,7 @@ def _run_plan_management_tui(session: AgentSession, console: Console):
                 session.plan.insert(to_index, item_to_move)
                 console.print(f"✅ Step moved from position {from_index + 1} to {to_index + 1}.", style="green")
 
-            else: # An existing step was selected
+            else:
                 step_index = int(action_choice.split('.')[0]) - 1
                 step_text = session.plan[step_index]
 
@@ -540,13 +540,47 @@ def run_tui(args, scopes, recipes, scopes_file_path):
 
             elif command == '/approve':
                 if not session.last_execution_result: console.print("❌ No changes to approve.", style="red"); continue
-                with console.status("[cyan]Applying..."): success = session.approve_changes()
-                if success: console.print("✅ Changes applied.", style="green"); _save_session(session)
-                else: console.print("❌ Failed to apply.", style="red")
-            
+                
+                try:
+                    from InquirerPy import prompt
+                    summary = session.last_execution_result.get("summary", {})
+                    all_files = summary.get("modified", []) + summary.get("created", [])
+                    
+                    if not all_files:
+                        console.print("✅ No file changes were proposed to approve.", style="yellow")
+                        session.last_execution_result = None # Clear state
+                        continue
+
+                    approve_q = {
+                        "type": "checkbox", "name": "files", "message": "Select the changes you wish to apply:",
+                        "choices": all_files, "validate": lambda r: len(r) > 0,
+                        "invalid_message": "You must select at least one file to apply.",
+                        "transformer": lambda r: f"{len(r)} file(s) selected."
+                    }
+                    result = prompt([approve_q])
+                    files_to_approve = result.get("files") if result else []
+
+                    if not files_to_approve:
+                        console.print("Approval cancelled.", style="yellow"); continue
+
+                    with console.status("[cyan]Applying..."):
+                        is_full_approval = session.approve_changes(files_to_approve)
+                    
+                    if is_full_approval:
+                        console.print("✅ All changes applied. Moving to the next step.", style="green")
+                    else:
+                        console.print("✅ Partial changes applied.", style="green")
+                        console.print("👉 Use `/retry <feedback>` to fix the remaining files, or `/skip` to move on.", style="cyan")
+                    
+                    _save_session(session)
+
+                except (KeyboardInterrupt, ImportError):
+                    console.print("Approval cancelled.", style="yellow")
+
             elif command == '/retry':
-                if not session.last_execution_result: console.print("❌ Nothing to retry.", style="red"); continue
-                if not arg_string: console.print("❌ Please provide feedback.", style="red"); continue
+                if not session.plan or session.current_step >= len(session.plan):
+                    console.print("❌ Nothing to retry.", style="red"); continue
+                if not arg_string: console.print("❌ Please provide feedback for the retry.", style="red"); continue
                 console.print(f"\n--- Retrying Step {session.current_step + 1} ---", style="bold yellow")
                 with console.status("[cyan]Agent is working..."): result = session.retry_step(arg_string)
                 _display_execution_summary(result, console)
