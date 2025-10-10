@@ -20,12 +20,11 @@ def test_initial_state_completions(completer):
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
-    # --- FIX: Convert FormattedText to string before creating the set ---
     completion_displays = {to_plain_text(c.display) for c in completions}
     
     assert "task - set goal" in completion_displays
-    assert "context - set from scope" in completion_displays
-    assert "tui - help" in completion_displays
+    assert "context - set context" in completion_displays # <-- FIX: Updated assertion
+    assert "menu - help" in completion_displays
     # These should NOT be present in the initial state
     assert "plan - generate or manage" not in completion_displays
     assert "agent - run step" not in completion_displays
@@ -38,7 +37,6 @@ def test_has_goal_state_completions(completer):
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
-    # --- FIX: Convert FormattedText to string before creating the set ---
     completion_displays = {to_plain_text(c.display) for c in completions}
     
     assert "task - set goal" in completion_displays
@@ -53,7 +51,6 @@ def test_has_plan_state_completions(completer):
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
-    # --- FIX: Convert FormattedText to string before creating the set ---
     completion_displays = {to_plain_text(c.display) for c in completions}
     
     assert "agent - run step" in completion_displays
@@ -69,7 +66,6 @@ def test_pending_changes_state_completions(completer):
     doc = Document("/")
     completions = list(completer.get_completions(doc, None))
     
-    # --- FIX: Convert FormattedText to string before creating the set ---
     completion_displays = {to_plain_text(c.display) for c in completions}
     
     # All previous commands should still be there
@@ -103,6 +99,5 @@ def test_completion_object_structure(completer):
     
     assert task_completion is not None
     assert task_completion.text == "/task"
-    # --- FIX: Convert FormattedText to string before assertion ---
     assert to_plain_text(task_completion.display) == "task - set goal"
     assert to_plain_text(task_completion.display_meta) == "Sets the high-level goal for the agent."

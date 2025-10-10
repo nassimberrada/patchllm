@@ -12,21 +12,19 @@ COMMAND_DEFINITIONS = [
     {"command": "/run", "display": "agent - run step", "meta": "Executes the current plan step.", "states": ["has_plan"]},
     {"command": "/skip", "display": "agent - skip step", "meta": "Skips the current step and moves to the next.", "states": ["has_plan"]},
     # Context Management
-    {"command": "/add_context", "display": "context - add from scope", "meta": "Adds files from a scope to the current context.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/clear_context", "display": "context - clear", "meta": "Empties the current context.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/context", "display": "context - set from scope", "meta": "Replaces the context with files from a scope.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/context", "display": "context - set context", "meta": "Replaces the context with files from a scope.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/scopes", "display": "context - manage scopes", "meta": "Opens an interactive menu to manage your saved scopes.", "states": ["initial", "has_goal", "has_plan"]},
     # Planning Workflow
     {"command": "/ask", "display": "plan - ask question", "meta": "Ask a clarifying question about the current plan.", "states": ["has_plan"]},
     {"command": "/plan", "display": "plan - generate or manage", "meta": "Generates a plan or manages the existing one.", "states": ["has_goal", "has_plan"]},
     {"command": "/refine", "display": "plan - refine with feedback", "meta": "Refine the plan based on new feedback or ideas.", "states": ["has_plan"]},
     # Task Management
     {"command": "/task", "display": "task - set goal", "meta": "Sets the high-level goal for the agent.", "states": ["initial", "has_goal", "has_plan"]},
-    # TUI / Session Management
-    {"command": "/exit", "display": "tui - exit session", "meta": "Exits the agent session.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/help", "display": "tui - help", "meta": "Shows the detailed help message.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/show", "display": "tui - show state", "meta": "Shows the current goal, plan, context, or history.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/scopes", "display": "tui - manage scopes", "meta": "Opens an interactive menu to manage your saved scopes.", "states": ["initial", "has_goal", "has_plan"]},
-    {"command": "/settings", "display": "tui - settings", "meta": "Configure the model and API keys.", "states": ["initial", "has_goal", "has_plan"]},
+    # Menu / Session Management
+    {"command": "/exit", "display": "menu - exit session", "meta": "Exits the agent session.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/help", "display": "menu - help", "meta": "Shows the detailed help message.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/show", "display": "menu - show state", "meta": "Shows the current goal, plan, context, or history.", "states": ["initial", "has_goal", "has_plan"]},
+    {"command": "/settings", "display": "menu - settings", "meta": "Configure the model and API keys.", "states": ["initial", "has_goal", "has_plan"]},
 ]
 
 
@@ -69,7 +67,6 @@ class PatchLLMCompleter(Completer):
         words = text.lstrip().split()
         word_count = len(words)
         
-        # --- FIX: Build a cumulative set of active states ---
         active_states = {"initial"}
         if self.has_goal:
             active_states.add("has_goal")
@@ -85,7 +82,6 @@ class PatchLLMCompleter(Completer):
             command_to_complete = words[0] if words else "/"
             if command_to_complete.startswith('/'):
                 for definition in self.all_command_defs:
-                    # --- FIX: Check if ANY of a command's required states are active ---
                     is_valid_state = any(s in active_states for s in definition["states"])
 
                     if is_valid_state and definition["command"].startswith(command_to_complete):
@@ -98,7 +94,7 @@ class PatchLLMCompleter(Completer):
             return
 
         # Case 2: We are in a "scope" context
-        if words and words[0] in ['/context', '/add_context']:
+        if words and words[0] in ['/context']: # Removed /add_context
             scope_to_complete = words[1] if word_count > 1 else ""
             
             if word_count == 1 and text.endswith(' '):

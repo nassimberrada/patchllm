@@ -44,12 +44,9 @@ def _print_help():
     help_text.append("  /retry <feedback>", style="bold"); help_text.append("\n    ↳ Retries the last step with new feedback.\n")
     help_text.append("  /revert", style="bold"); help_text.append("\n    ↳ Reverts the changes from the last /approve.\n\n")
     help_text.append("Context Management:\n", style="bold cyan")
-    help_text.append("  /context <scope>\n", style="bold"); help_text.append("    ↳ Replaces context with a scope.\n")
-    help_text.append("  /add_context <scope>\n", style="bold"); help_text.append("    ↳ Adds files from a scope to context.\n")
-    help_text.append("  /add_context --interactive\n", style="bold"); help_text.append("    ↳ Use fuzzy finder to add files.\n")
-    help_text.append("  /clear_context\n", style="bold"); help_text.append("    ↳ Empties the context.\n")
-    help_text.append("  /scopes\n", style="bold"); help_text.append("        ↳ Enter the scope management menu.\n\n")
-    help_text.append("General:\n", style="bold cyan")
+    help_text.append("  /context <scope>\n", style="bold"); help_text.append("    ↳ Sets the context using a scope (e.g., @git:staged).\n")
+    help_text.append("  /scopes\n", style="bold"); help_text.append("        ↳ Opens an interactive menu to create and manage scopes.\n\n")
+    help_text.append("Menu & Session:\n", style="bold cyan")
     help_text.append("  /show [goal|plan|context|history]\n", style="bold"); help_text.append(" ↳ Shows session state.\n")
     help_text.append("  /settings\n", style="bold"); help_text.append("      ↳ Configure the model and API keys.\n")
     help_text.append("  /help\n", style="bold"); help_text.append("          ↳ Shows this help message.\n")
@@ -616,19 +613,6 @@ def run_tui(args, scopes, recipes, scopes_file_path):
             elif command == '/context':
                 with console.status("[cyan]Building..."): summary = session.load_context_from_scope(arg_string)
                 console.print(Panel(summary, title="Context Summary", border_style="cyan")); _save_session(session)
-            
-            elif command == '/add_context':
-                if arg_string == '--interactive':
-                    new_files = select_files_interactively(Path(".").resolve())
-                    if new_files:
-                        with console.status("[cyan]Updating..."): summary = session.add_files_and_rebuild_context(new_files)
-                        console.print(Panel(summary, title="Context Summary", border_style="cyan")); _save_session(session)
-                else:
-                    with console.status("[cyan]Updating..."): summary = session.add_context_from_scope(arg_string)
-                    console.print(Panel(summary, title="Context Summary", border_style="cyan")); _save_session(session)
-            
-            elif command == '/clear_context':
-                session.clear_context(); console.print("✅ Context cleared.", style="green"); _save_session(session)
             
             elif command == '/scopes':
                 _run_scope_management_tui(session.scopes, scopes_file_path, console)

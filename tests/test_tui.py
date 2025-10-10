@@ -139,19 +139,7 @@ def test_tui_skip_command(mock_prompt, mock_agent_session, temp_project):
         main()
     mock_session_instance.skip_step.assert_called_once()
 
-@patch('patchllm.tui.interface.select_files_interactively')
-@patch('patchllm.tui.interface.AgentSession')
-@patch('prompt_toolkit.PromptSession.prompt')
-def test_tui_interactive_add_context_command(mock_prompt, mock_agent_session, mock_selector, temp_project):
-    os.chdir(temp_project)
-    mock_session_instance = mock_agent_session.return_value
-    mock_file_path = Path(temp_project / "selected.py").resolve()
-    mock_selector.return_value = [mock_file_path]
-    mock_prompt.side_effect = ["/add_context --interactive", "/exit"]
-    with patch.object(sys, 'argv', ['patchllm']):
-        main()
-    mock_selector.assert_called_once()
-    mock_session_instance.add_files_and_rebuild_context.assert_called_once_with([mock_file_path])
+# --- FIX: Removed obsolete test for /add_context command ---
 
 @pytest.mark.parametrize("sub_command, session_data, expected_output, is_empty", [
     ("plan", {"plan": ["step 1"]}, "Execution Plan", False),
