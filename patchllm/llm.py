@@ -23,7 +23,7 @@ def run_llm_query(messages: list[dict], model_name: str) -> str | None:
         response = litellm.completion(
             model=model_name, 
             messages=messages,
-            timeout=60,  # 60-second timeout for the API call
+            timeout=120,  # 120-second timeout for the API call
             max_retries=3  # Retry up to 3 times on failure
         )
         
