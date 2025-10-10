@@ -37,8 +37,8 @@ def _print_help():
     help_text.append("  /plan --edit <N> <text>", style="bold"); help_text.append("\n    ↳ Edits step N of the plan.\n")
     help_text.append("  /plan --rm <N>", style="bold"); help_text.append("\n    ↳ Removes step N from the plan.\n")
     help_text.append("  /plan --add <text>", style="bold"); help_text.append("\n    ↳ Adds a new step to the end of the plan.\n")
-    help_text.append("  /run", style="bold"); help_text.append("\n    ↳ Executes all remaining steps as a single task.\n")
-    help_text.append("  /run next", style="bold"); help_text.append("\n    ↳ Executes only the next step in the plan.\n")
+    help_text.append("  /run", style="bold"); help_text.append("\n    ↳ Executes only the next step in the plan.\n")
+    help_text.append("  /run all", style="bold"); help_text.append("\n    ↳ Executes all remaining steps as a single task.\n")
     help_text.append("  /skip", style="bold"); help_text.append("\n    ↳ Skips the current step.\n")
     help_text.append("  /diff [all|filename]", style="bold"); help_text.append("\n    ↳ Shows the full diff for a file or all files.\n")
     help_text.append("  /approve", style="bold"); help_text.append("\n    ↳ Interactively select and apply changes from the last run.\n")
@@ -538,13 +538,13 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 if not session.plan: console.print("❌ No plan.", style="red"); continue
                 if session.current_step >= len(session.plan): console.print("✅ Plan complete.", style="green"); continue
                 
-                if arg_string == 'next':
-                    console.print(f"\n--- Executing Step {session.current_step + 1}/{len(session.plan)} ---", style="bold yellow")
-                    with console.status("[cyan]Agent is working..."): result = session.run_next_step()
-                else:
+                if arg_string == 'all':
                     remaining_count = len(session.plan) - session.current_step
                     console.print(f"\n--- Executing all {remaining_count} remaining steps ---", style="bold yellow")
                     with console.status("[cyan]Agent is working..."): result = session.run_all_remaining_steps()
+                else:
+                    console.print(f"\n--- Executing Step {session.current_step + 1}/{len(session.plan)} ---", style="bold yellow")
+                    with console.status("[cyan]Agent is working..."): result = session.run_next_step()
 
                 _display_execution_summary(result, console)
                 if result: console.print("✅ Preview ready. Use `/diff` to review.", style="green")

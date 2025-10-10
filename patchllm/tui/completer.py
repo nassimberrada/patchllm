@@ -9,7 +9,7 @@ COMMAND_DEFINITIONS = [
     {"command": "/diff", "display": "agent - view diff", "meta": "Shows the full diff for the proposed changes.", "states": ["has_pending_changes"]},
     {"command": "/retry", "display": "agent - retry with feedback", "meta": "Retries the last step with new feedback.", "states": ["has_pending_changes"]},
     {"command": "/revert", "display": "agent - revert last approval", "meta": "Reverts the changes from the last /approve.", "states": ["can_revert"]},
-    {"command": "/run", "display": "agent - run step(s)", "meta": "Executes plan steps. Use '/run next' for one step.", "states": ["has_plan"]},
+    {"command": "/run", "display": "agent - run step", "meta": "Executes the next step. Use '/run all' for all steps.", "states": ["has_plan"]},
     {"command": "/skip", "display": "agent - skip step", "meta": "Skips the current step and moves to the next.", "states": ["has_plan"]},
     # Context Management
     {"command": "/context", "display": "context - set context", "meta": "Replaces the context with files from a scope.", "states": ["initial", "has_goal", "has_plan"]},
@@ -96,11 +96,11 @@ class PatchLLMCompleter(Completer):
         # Special Case: We are typing after /run
         if words and words[0] == '/run':
             if word_count == 1 and text.endswith(' '):
-                yield Completion("next", start_position=0, display_meta="Execute only the next step.")
+                yield Completion("all", start_position=0, display_meta="Execute all remaining steps.")
                 return
             if word_count == 2 and not text.endswith(' '):
-                if "next".startswith(words[1]):
-                     yield Completion("next", start_position=-len(words[1]), display_meta="Execute only the next step.")
+                if "all".startswith(words[1]):
+                     yield Completion("all", start_position=-len(words[1]), display_meta="Execute all remaining steps.")
                 return
 
         # Case 2: We are in a "scope" context
