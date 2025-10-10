@@ -293,22 +293,31 @@ def _run_scope_management_tui(scopes, scopes_file_path, console):
             action = result.get("action") if result else "Back to agent"
             if action == "Back to agent": break
 
+            # --- MODIFICATION: Create a base Namespace with all expected keys ---
+            base_args = argparse.Namespace(
+                list_scopes=False, show_scope=None, add_scope=None,
+                remove_scope=None, update_scope=None
+            )
+
             if action == "List scopes":
-                handle_scope_management(argparse.Namespace(list_scopes=True), scopes, scopes_file_path, None)
+                base_args.list_scopes = True
+                handle_scope_management(base_args, scopes, scopes_file_path, None)
             
             elif action == "Show a scope":
                 if not scopes: console.print("No scopes to show.", style="yellow"); continue
                 scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to show?", "choices": sorted(scopes.keys())}
                 scope_r = prompt([scope_q])
                 if scope_r and scope_r.get("scope"):
-                    handle_scope_management(argparse.Namespace(show_scope=scope_r.get("scope")), scopes, scopes_file_path, None)
+                    base_args.show_scope = scope_r.get("scope")
+                    handle_scope_management(base_args, scopes, scopes_file_path, None)
             
             elif action == "Remove a scope":
                 if not scopes: console.print("No scopes to remove.", style="yellow"); continue
                 scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope to remove?", "choices": sorted(scopes.keys())}
                 scope_r = prompt([scope_q])
                 if scope_r and scope_r.get("scope"):
-                    handle_scope_management(argparse.Namespace(remove_scope=scope_r.get("scope")), scopes, scopes_file_path, None)
+                    base_args.remove_scope = scope_r.get("scope")
+                    handle_scope_management(base_args, scopes, scopes_file_path, None)
             
             elif action == "Add a new scope":
                 name_q = {"type": "input", "name": "name", "message": "Enter name for the new scope:", "validate": EmptyInputValidator()}
