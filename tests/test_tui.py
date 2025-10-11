@@ -367,3 +367,31 @@ def test_tui_approve_command_interactive_selection(mock_prompt, mock_agent_sessi
         
     mock_inquirer_prompt.assert_called_once()
     mock_session_instance.approve_changes.assert_called_once_with(["a.py"])
+
+@patch('patchllm.tui.interface.AgentSession')
+@patch('prompt_toolkit.PromptSession.prompt')
+def test_tui_displays_change_summary(mock_prompt, mock_agent_session, temp_project, capsys):
+    """Tests that the TUI correctly displays the change summary after a run."""
+    os.chdir(temp_project)
+    mock_session_instance = mock_agent_session.return_value
+    mock_session_instance.plan = ["do a thing"]
+    mock_session_instance.current_step = 0
+    
+    # Mock the result that comes back from the executor
+    mock_execution_result = {
+        "summary": {"modified": ["a.py"], "created": []},
+        "change_summary": "This is the natural language summary of the changes."
+    }
+    mock_session_instance.run_next_step.return_value = mock_execution_result
+    
+    mock_prompt.side_effect = ["/run", "/exit"]
+    with patch.object(sys, 'argv', ['patchllm']):
+        main()
+        
+    mock_session_instance.run_next_step.assert_called_once()
+    
+    captured = capsys.readouterr()
+    assert "Change Summary" in captured.out
+    assert "This is the natural language summary of the changes." in captured.out
+    assert "Proposed File Changes" in captured.out
+    assert "a.py" in captured.out

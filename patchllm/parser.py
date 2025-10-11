@@ -20,6 +20,14 @@ def _parse_file_blocks(response: str) -> list[tuple[Path, str]]:
         
     return parsed_blocks
 
+def parse_change_summary(response: str) -> str | None:
+    """Parses the LLM response to extract the change summary."""
+    pattern = r"<change_summary>(.*?)</change_summary>"
+    match = re.search(pattern, response, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None
+
 def paste_response(response: str):
     """Applies all file updates from the LLM's response to the local filesystem."""
     parsed_blocks = _parse_file_blocks(response)

@@ -55,21 +55,34 @@ def _print_help():
     return Panel(help_text, title="Help", border_style="green")
 
 def _display_execution_summary(result, console):
-    if not result or not result.get("summary"):
-        console.print("❌ Step failed to produce a result.", style="red"); return
-    summary = result["summary"]
+    if not result:
+        console.print("❌ Step failed to produce a result.", style="red")
+        return
+
+    change_summary = result.get("change_summary")
+    if change_summary:
+        console.print(Panel(Text(change_summary, justify="left"), title="Change Summary", border_style="green", expand=False))
+
+    summary = result.get("summary", {})
     modified = summary.get("modified", [])
     created = summary.get("created", [])
+
     if not modified and not created:
-        console.print("✅ Step finished, but no file changes were detected.", style="yellow"); return
+        if not change_summary:
+            console.print("✅ Step finished, but no file changes were detected.", style="yellow")
+        return
+
     summary_text = Text()
     if modified:
         summary_text.append("Modified:\n", style="bold yellow")
         for f in modified: summary_text.append(f"  - {f}\n")
     if created:
+        if modified:
+            summary_text.append("\n")
         summary_text.append("Created:\n", style="bold green")
         for f in created: summary_text.append(f"  - {f}\n")
-    console.print(Panel(summary_text, title="Proposed Changes", border_style="cyan"))
+
+    console.print(Panel(summary_text, title="Proposed File Changes", border_style="cyan", expand=False))
 
 def _save_session(session: AgentSession):
     with open(SESSION_FILE_PATH, 'w') as f: json.dump(session.to_dict(), f, indent=2)
@@ -619,11 +632,16 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                     console.print("Approval cancelled.", style="yellow")
 
             elif command == '/retry':
-                if not session.plan or session.current_step >= len(session.plan):
-                    console.print("❌ Nothing to retry.", style="red"); continue
-                if not arg_string: console.print("❌ Please provide feedback for the retry.", style="red"); continue
-                console.print(f"\n--- Retrying Step {session.current_step + 1} ---", style="bold yellow")
-                with console.status("[cyan]Agent is working..."): result = session.retry_step(arg_string)
+                if not session.last_execution_result:
+                    console.print("❌ Nothing to retry.", style="red")
+                    continue
+                if not arg_string:
+                    console.print("❌ Please provide feedback for the retry.", style="red")
+                    continue
+                
+                console.print("\n--- Retrying ---", style="bold yellow")
+                with console.status("[cyan]Agent is working..."):
+                    result = session.retry_step(arg_string)
                 _display_execution_summary(result, console)
 
             elif command == '/revert':

@@ -1,5 +1,5 @@
 from pathlib import Path
-from patchllm.parser import paste_response, summarize_changes, _parse_file_blocks
+from patchllm.parser import paste_response, summarize_changes, _parse_file_blocks, parse_change_summary
 
 def test_parse_file_blocks_simple():
     response = "<file_path:/app/main.py>\n```python\nprint('hello')\n```"
@@ -8,6 +8,19 @@ def test_parse_file_blocks_simple():
     path, content = result[0]
     assert path == Path("/app/main.py").resolve()
     assert content == "print('hello')"
+
+def test_parse_change_summary():
+    """Tests that the change summary is correctly extracted."""
+    response_with_summary = (
+        "<change_summary>\nThis is the summary.\n</change_summary>\n"
+        "<file_path:/app/main.py>\n```python\nprint('hello')\n```"
+    )
+    summary = parse_change_summary(response_with_summary)
+    assert summary == "This is the summary."
+
+    response_no_summary = "<file_path:/app/main.py>\n```python\nprint('hello')\n```"
+    summary_none = parse_change_summary(response_no_summary)
+    assert summary_none is None
 
 def test_paste_response_updates_file(tmp_path):
     file_path = tmp_path / "test.txt"

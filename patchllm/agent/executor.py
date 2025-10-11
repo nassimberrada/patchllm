@@ -1,5 +1,5 @@
 from ..llm import run_llm_query
-from ..parser import summarize_changes, get_diff_for_file
+from ..parser import summarize_changes, get_diff_for_file, parse_change_summary
 
 def execute_step(step_instruction: str, history: list[dict], context: str | None, context_images: list | None, model_name: str) -> dict | None:
     """
@@ -39,6 +39,7 @@ def execute_step(step_instruction: str, history: list[dict], context: str | None
     if not llm_response:
         return None
     
+    change_summary = parse_change_summary(llm_response)
     summary = summarize_changes(llm_response)
     all_files = summary.get("modified", []) + summary.get("created", [])
     
@@ -52,4 +53,5 @@ def execute_step(step_instruction: str, history: list[dict], context: str | None
         "llm_response": llm_response,
         "summary": summary,
         "diffs": diffs,
+        "change_summary": change_summary,
     }
