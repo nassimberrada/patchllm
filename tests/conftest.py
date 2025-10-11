@@ -23,6 +23,7 @@ def temp_project(tmp_path):
     (tests_dir / "test_utils.py").write_text("from .. import utils\n\ndef test_helper():\n    assert utils.helper_function() == 1")
     
     (project_dir / "data.log").write_text("some log data")
+    (project_dir / "logo.png").write_bytes(b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc`\x00\x00\x00\x02\x00\x01\xe2!\xbc\x33\x00\x00\x00\x00IEND\xaeB`\x82')
 
     return project_dir
 

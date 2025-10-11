@@ -13,7 +13,6 @@ DEFAULT_EXCLUDE_EXTENSIONS = [
     # OS-specific
     ".DS_Store",
     # Media/Binary files
-    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp",
     ".mp3", ".mp4", ".mov", ".avi", ".pdf",
     ".o", ".so", ".dll", ".exe",
     # Unity specific

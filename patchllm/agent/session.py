@@ -17,6 +17,7 @@ class AgentSession:
         self.current_step: int = 0
         self.context: str | None = None
         self.context_files: list[Path] = []
+        self.context_images: list = []
         self.history: list[dict] = [{"role": "system", "content": get_system_prompt()}]
         self.planning_history: list[dict] = []
         self.scopes = scopes
@@ -145,26 +146,35 @@ class AgentSession:
         """Asks a clarifying question about the plan or the context."""
         from ..llm import run_llm_query
 
-        prompt_content = (
+        prompt_text = (
             "Based on our conversation so far, please answer my question.\n\n"
             f"## My Question\n{question}"
         )
 
         if self.context:
-            prompt_content = (
+            prompt_text = (
                 "Based on the provided context and our conversation so far, please answer my question.\n\n"
                 f"## Code Context\n{self.context}\n\n---\n\n"
                 f"## My Question\n{question}"
             )
+        
+        user_content = [{"type": "text", "text": prompt_text}]
 
-        self.planning_history.append({"role": "user", "content": prompt_content})
-        response = run_llm_query(self.planning_history, self.args.model)
+        if self.context_images:
+            for image_info in self.context_images:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{image_info['mime_type']};base64,{image_info['content_base64']}"
+                    }
+                })
+
+        messages = self.planning_history + [{"role": "user", "content": user_content}]
+        response = run_llm_query(messages, self.args.model)
 
         if response:
             self.planning_history.append({"role": "assistant", "content": response})
-        else:
-            self.planning_history.pop()
-
+        
         return response
 
     def refine_plan(self, feedback: str) -> bool:
@@ -186,7 +196,7 @@ class AgentSession:
         
         if not self.plan or self.current_step >= len(self.plan): return None
         step_instruction = instruction_override or self.plan[self.current_step]
-        result = executor.execute_step(step_instruction, self.history, self.context, self.args.model)
+        result = executor.execute_step(step_instruction, self.history, self.context, self.context_images, self.args.model)
         if result: self.last_execution_result = result
         return result
 
@@ -206,7 +216,7 @@ class AgentSession:
             f"--- Remaining Steps ---\n{formatted_steps}"
         )
 
-        result = executor.execute_step(combined_instruction, self.history, self.context, self.args.model)
+        result = executor.execute_step(combined_instruction, self.history, self.context, self.context_images, self.args.model)
         
         if result:
             self.last_execution_result = result
@@ -322,7 +332,7 @@ class AgentSession:
                 f"---\n\nMy original instruction was: {original_instruction}"
             )
             
-        result = executor.execute_step(refined_instruction, self.history, self.context, self.args.model)
+        result = executor.execute_step(refined_instruction, self.history, self.context, self.context_images, self.args.model)
         if result:
             self.last_execution_result = result
             if is_multi_step:
@@ -346,6 +356,7 @@ class AgentSession:
         if context_object:
             self.context = context_object.get("context")
             self.context_files = context_object.get("files", [])
+            self.context_images = context_object.get("images", [])
             return context_object.get("tree", "Context loaded.")
         self.clear_context()
         return f"⚠️  Could not build context for scope '{scope_name}'. No files found."
@@ -359,6 +370,7 @@ class AgentSession:
         if context_object:
             self.context = context_object.get("context")
             self.context_files = context_object.get("files", [])
+            self.context_images = context_object.get("images", [])
             return context_object.get("tree", "Context updated.")
         return "⚠️  Failed to rebuild context with new files."
 
@@ -373,3 +385,4 @@ class AgentSession:
     def clear_context(self):
         self.context = None
         self.context_files = []
+        self.context_images = []

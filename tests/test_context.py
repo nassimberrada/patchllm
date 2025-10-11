@@ -2,9 +2,12 @@ import os
 import time
 import subprocess
 import textwrap
+import pytest
+import base64
 # --- MODIFICATION: Changed to absolute imports ---
 from patchllm.scopes.builder import build_context
 from patchllm.utils import load_from_py_file
+from patchllm.scopes.helpers import _format_context
 
 # --- Static Scope Tests ---
 
@@ -99,3 +102,39 @@ def test_dynamic_scope_dir(temp_project):
     assert "component.js" in context
     assert "styles.css" in context
     assert "main.py" not in context
+
+def test_format_context_with_image(temp_project):
+    """Tests that _format_context correctly processes both text and image files."""
+    os.chdir(temp_project)
+    text_file = temp_project / "main.py"
+    image_file = temp_project / "logo.png"
+    
+    all_files = [text_file, image_file]
+    
+    result = _format_context(all_files, [], temp_project)
+    
+    assert result is not None
+    
+    # Check text context
+    assert "<file_path:" in result["context"]
+    assert "main.py" in result["context"]
+    assert "<file_path:" + image_file.as_posix() not in result["context"] # Image content shouldn't be in text context
+    
+    # Check image data
+    assert "images" in result
+    assert len(result["images"]) == 1
+    image_data = result["images"][0]
+    assert image_data["path"] == image_file
+    assert image_data["mime_type"] == "image/png"
+    
+    # Check if base64 content is valid
+    try:
+        base64.b64decode(image_data["content_base64"])
+    except Exception:
+        pytest.fail("Image content is not valid base64")
+
+    # Check files list
+    assert "files" in result
+    assert len(result["files"]) == 2
+    assert text_file in result["files"]
+    assert image_file in result["files"]

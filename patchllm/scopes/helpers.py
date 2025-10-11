@@ -4,10 +4,14 @@ import subprocess
 import shutil
 from pathlib import Path
 from rich.console import Console
+import base64
+import mimetypes
 
 from .constants import BASE_TEMPLATE, URL_CONTENT_TEMPLATE
 
 console = Console()
+
+SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 def find_files(base_path: Path, include_patterns: list[str], exclude_patterns: list[str] = None) -> list[Path]:
     """Finds all files using glob patterns."""
@@ -72,12 +76,28 @@ def _format_context(file_paths: list[Path], urls: list[str], base_path: Path) ->
     """Helper to format the final context string and preserve the file list."""
     source_tree_str = generate_source_tree(base_path, file_paths)
     file_contents = []
+    image_files_data = []
+
     for file_path in file_paths:
-        try:
-            content = file_path.read_text(encoding='utf-8', errors='ignore')
-            file_contents.append(f"<file_path:{file_path.as_posix()}>\n```\n{content}\n```")
-        except Exception as e:
-            console.print(f"⚠️  Could not read file {file_path}: {e}", style="yellow")
+        if file_path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS:
+            try:
+                mime_type, _ = mimetypes.guess_type(file_path)
+                if mime_type and mime_type.startswith('image/'):
+                    with open(file_path, "rb") as f:
+                        content_base64 = base64.b64encode(f.read()).decode('utf-8')
+                    image_files_data.append({
+                        "path": file_path,
+                        "mime_type": mime_type,
+                        "content_base64": content_base64
+                    })
+            except Exception as e:
+                console.print(f"⚠️  Could not process image file {file_path}: {e}", style="yellow")
+        else:
+            try:
+                content = file_path.read_text(encoding='utf-8', errors='ignore')
+                file_contents.append(f"<file_path:{file_path.as_posix()}>\n```\n{content}\n```")
+            except Exception as e:
+                console.print(f"⚠️  Could not read file {file_path}: {e}", style="yellow")
 
     files_content_str = "\n\n".join(file_contents)
     url_contents_str = fetch_and_process_urls(urls)
@@ -87,7 +107,12 @@ def _format_context(file_paths: list[Path], urls: list[str], base_path: Path) ->
     final_context = final_context.replace("{{files_content}}", files_content_str)
     
     # --- CORRECTION: Return the original, pristine list of Path objects ---
-    return {"tree": source_tree_str, "context": final_context, "files": file_paths}
+    return {
+        "tree": source_tree_str,
+        "context": final_context,
+        "files": file_paths,
+        "images": image_files_data
+    }
 
 def fetch_and_process_urls(urls: list[str]) -> str:
     """Downloads and converts a list of URLs to text."""

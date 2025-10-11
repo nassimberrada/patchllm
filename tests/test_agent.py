@@ -24,12 +24,16 @@ def test_session_ask_question_about_plan(mock_args):
         response = session.ask_question("Why step 1?")
         
         assert response == "This is the answer."
-        assert len(session.planning_history) == 3
+        assert len(session.planning_history) == 2 # System, Assistant (user is not stored)
         
-        sent_prompt = session.planning_history[-2]['content']
-        assert "My Question" in sent_prompt
-        assert "Why step 1?" in sent_prompt
-        assert "Code Context" not in sent_prompt
+        # Check the call to the mock
+        mock_llm.assert_called_once()
+        sent_messages = mock_llm.call_args[0][0]
+        user_message_content = sent_messages[-1]['content'][0]['text']
+        
+        assert "My Question" in user_message_content
+        assert "Why step 1?" in user_message_content
+        assert "Code Context" not in user_message_content
         
         assert session.planning_history[-1]['content'] == "This is the answer."
         assert session.plan == ["step 1"]
@@ -45,12 +49,44 @@ def test_session_ask_question_about_context(mock_args):
         response = session.ask_question("What does app.py do?")
         
         assert response == "It's a web server."
-        assert len(session.planning_history) == 3
-        prompt_content = session.planning_history[-2]['content']
+        assert len(session.planning_history) == 2
+        
+        mock_llm.assert_called_once()
+        sent_messages = mock_llm.call_args[0][0]
+        prompt_content = sent_messages[-1]['content'][0]['text']
+        
         assert "Code Context" in prompt_content
         assert "<file_path:/app.py>..." in prompt_content
         assert "My Question" in prompt_content
         assert "What does app.py do?" in prompt_content
+
+def test_session_ask_question_with_image(mock_args):
+    """Ensures that ask_question sends image data correctly."""
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.context = "Some text context"
+    session.context_images = [{
+        "mime_type": "image/png",
+        "content_base64": "base64string"
+    }]
+    
+    with patch('patchllm.llm.run_llm_query') as mock_llm:
+        mock_llm.return_value = "It's an image."
+        session.ask_question("What is this?")
+        
+        mock_llm.assert_called_once()
+        sent_messages = mock_llm.call_args[0][0]
+        user_message_content = sent_messages[-1]['content']
+        
+        assert isinstance(user_message_content, list)
+        assert len(user_message_content) == 2
+        
+        text_part = user_message_content[0]
+        assert text_part['type'] == 'text'
+        assert "What is this?" in text_part['text']
+        
+        image_part = user_message_content[1]
+        assert image_part['type'] == 'image_url'
+        assert image_part['image_url']['url'] == "data:image/png;base64,base64string"
 
 def test_session_refine_plan(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
@@ -275,3 +311,18 @@ def test_session_revert_last_approval(mock_args, tmp_path):
     assert file_to_modify.read_text() == original_content
     assert not file_to_create.exists()
     assert session.last_revert_state == []
+
+def test_session_load_context_with_image(mock_args, temp_project):
+    """Tests that loading a scope with an image populates context_images."""
+    os.chdir(temp_project)
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    
+    # We use a dynamic scope that will just grab everything in the directory
+    session.load_context_from_scope(f"@dir:{temp_project.as_posix()}")
+
+    assert session.context is not None
+    assert "main.py" in session.context
+    
+    assert session.context_images is not None
+    assert len(session.context_images) == 1
+    assert session.context_images[0]["path"].name == "logo.png"

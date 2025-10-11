@@ -1,7 +1,7 @@
 from ..llm import run_llm_query
 from ..parser import summarize_changes, get_diff_for_file
 
-def execute_step(step_instruction: str, history: list[dict], context: str | None, model_name: str) -> dict | None:
+def execute_step(step_instruction: str, history: list[dict], context: str | None, context_images: list | None, model_name: str) -> dict | None:
     """
     Executes a single step of the plan by calling the LLM.
 
@@ -9,18 +9,30 @@ def execute_step(step_instruction: str, history: list[dict], context: str | None
         step_instruction (str): The instruction for the current step.
         history (list[dict]): The full conversation history.
         context (str | None): The file context for the LLM.
+        context_images (list | None): A list of image data dictionaries for multimodal context.
         model_name (str): The name of the LLM to use.
 
     Returns:
         A dictionary containing the instruction, response, and diffs, or None if it fails.
     """
     
-    prompt = f"## Current Task:\n{step_instruction}"
+    prompt_text = f"## Current Task:\n{step_instruction}"
     if context:
-        prompt = f"## Context:\n{context}\n\n---\n\n{prompt}"
+        prompt_text = f"## Context:\n{context}\n\n---\n\n{prompt_text}"
     
+    user_content = [{"type": "text", "text": prompt_text}]
+
+    if context_images:
+        for image_info in context_images:
+            user_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{image_info['mime_type']};base64,{image_info['content_base64']}"
+                }
+            })
+
     # Create a temporary message history for this specific call
-    messages = history + [{"role": "user", "content": prompt}]
+    messages = history + [{"role": "user", "content": user_content}]
     
     llm_response = run_llm_query(messages, model_name)
     
