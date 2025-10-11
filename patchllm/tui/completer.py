@@ -15,7 +15,7 @@ COMMAND_DEFINITIONS = [
     {"command": "/context", "display": "context - set context", "meta": "Replaces the context with files from a scope.", "states": ["initial", "has_goal", "has_plan"]},
     {"command": "/scopes", "display": "context - manage scopes", "meta": "Opens an interactive menu to manage your saved scopes.", "states": ["initial", "has_goal", "has_plan"]},
     # Planning Workflow
-    {"command": "/ask", "display": "plan - ask question", "meta": "Ask a clarifying question about the current plan.", "states": ["has_plan"]},
+    {"command": "/ask", "display": "agent - ask question", "meta": "Ask a question about the plan or code context.", "states": ["has_goal", "has_plan", "has_context"]},
     {"command": "/plan", "display": "plan - generate or manage", "meta": "Generates a plan or manages the existing one.", "states": ["has_goal", "has_plan"]},
     {"command": "/refine", "display": "plan - refine with feedback", "meta": "Refine the plan based on new feedback or ideas.", "states": ["has_plan"]},
     # Task Management
@@ -51,13 +51,15 @@ class PatchLLMCompleter(Completer):
         self.has_plan = False
         self.has_pending_changes = False
         self.can_revert = False
+        self.has_context = False
 
-    def set_session_state(self, has_goal: bool, has_plan: bool, has_pending_changes: bool, can_revert: bool):
+    def set_session_state(self, has_goal: bool, has_plan: bool, has_pending_changes: bool, can_revert: bool, has_context: bool):
         """Updates the completer's state from the agent session."""
         self.has_goal = has_goal
         self.has_plan = has_plan
         self.has_pending_changes = has_pending_changes
         self.can_revert = can_revert
+        self.has_context = has_context
 
     def get_completions(self, document: Document, complete_event):
         """
@@ -76,6 +78,8 @@ class PatchLLMCompleter(Completer):
             active_states.add("has_pending_changes")
         if self.can_revert:
             active_states.add("can_revert")
+        if self.has_context:
+            active_states.add("has_context")
 
         # Case 1: We are typing the first word (the command)
         if word_count == 0 or (word_count == 1 and not text.endswith(' ')):

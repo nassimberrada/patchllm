@@ -141,16 +141,30 @@ class AgentSession:
                 return True
         return False
 
-    def ask_about_plan(self, question: str) -> str | None:
-        """Asks a clarifying question about the plan without changing it."""
+    def ask_question(self, question: str) -> str | None:
+        """Asks a clarifying question about the plan or the context."""
         from ..llm import run_llm_query
 
-        self.planning_history.append({"role": "user", "content": question})
+        prompt_content = (
+            "Based on our conversation so far, please answer my question.\n\n"
+            f"## My Question\n{question}"
+        )
+
+        if self.context:
+            prompt_content = (
+                "Based on the provided context and our conversation so far, please answer my question.\n\n"
+                f"## Code Context\n{self.context}\n\n---\n\n"
+                f"## My Question\n{question}"
+            )
+
+        self.planning_history.append({"role": "user", "content": prompt_content})
         response = run_llm_query(self.planning_history, self.args.model)
+
         if response:
             self.planning_history.append({"role": "assistant", "content": response})
         else:
             self.planning_history.pop()
+
         return response
 
     def refine_plan(self, feedback: str) -> bool:

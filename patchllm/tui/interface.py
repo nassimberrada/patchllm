@@ -32,7 +32,7 @@ def _print_help():
     help_text.append("Agent Workflow:\n", style="bold cyan")
     help_text.append("  /task <goal>", style="bold"); help_text.append("\n    ↳ Sets the high-level goal.\n")
     help_text.append("  /plan", style="bold"); help_text.append("\n    ↳ Generates a plan or opens interactive management if a plan exists.\n")
-    help_text.append("  /ask <question>", style="bold"); help_text.append("\n    ↳ Ask a question about the current plan.\n")
+    help_text.append("  /ask <question>", style="bold"); help_text.append("\n    ↳ Ask a question about the plan or the code context.\n")
     help_text.append("  /refine <feedback>", style="bold"); help_text.append("\n    ↳ Refine the plan with new feedback/ideas.\n")
     help_text.append("  /plan --edit <N> <text>", style="bold"); help_text.append("\n    ↳ Edits step N of the plan.\n")
     help_text.append("  /plan --rm <N>", style="bold"); help_text.append("\n    ↳ Removes step N from the plan.\n")
@@ -461,7 +461,8 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 has_goal=bool(session.goal),
                 has_plan=bool(session.plan),
                 has_pending_changes=bool(session.last_execution_result),
-                can_revert=bool(session.last_revert_state)
+                can_revert=bool(session.last_revert_state),
+                has_context=bool(session.context)
             )
             
             text = prompt_session.prompt(">>> ", completer=FuzzyCompleter(completer)).strip()
@@ -476,9 +477,10 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                 session.set_goal(arg_string); console.print("✅ Goal set.", style="green"); _save_session(session)
             
             elif command == '/ask':
-                if not session.plan: console.print("❌ No plan to ask about. Generate one with `/plan` first.", style="red"); continue
+                if not session.plan and not session.context:
+                    console.print("❌ No plan or context to ask about. Use `/context` to load files or `/plan` to generate a plan.", style="red"); continue
                 if not arg_string: console.print("❌ Please provide a question.", style="red"); continue
-                with console.status("[cyan]Asking assistant..."): response = session.ask_about_plan(arg_string)
+                with console.status("[cyan]Asking assistant..."): response = session.ask_question(arg_string)
                 if response:
                     console.print(Panel(response, title="Assistant's Answer", border_style="blue"))
                 else: console.print("❌ Failed to get a response.", style="red")

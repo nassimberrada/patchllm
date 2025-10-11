@@ -14,20 +14,43 @@ def mock_args():
             self.model = model
     return MockArgs()
 
-def test_session_ask_about_plan(mock_args):
+def test_session_ask_question_about_plan(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
     session.plan = ["step 1"]
     session.planning_history = [{"role": "system", "content": "You are a planner."}]
     
     with patch('patchllm.llm.run_llm_query') as mock_llm:
         mock_llm.return_value = "This is the answer."
-        response = session.ask_about_plan("Why step 1?")
+        response = session.ask_question("Why step 1?")
         
         assert response == "This is the answer."
         assert len(session.planning_history) == 3
-        assert session.planning_history[-2]['content'] == "Why step 1?"
+        
+        sent_prompt = session.planning_history[-2]['content']
+        assert "My Question" in sent_prompt
+        assert "Why step 1?" in sent_prompt
+        assert "Code Context" not in sent_prompt
+        
         assert session.planning_history[-1]['content'] == "This is the answer."
         assert session.plan == ["step 1"]
+
+
+def test_session_ask_question_about_context(mock_args):
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.context = "<file_path:/app.py>..."
+    session.planning_history = [{"role": "system", "content": "You are a planner."}]
+    
+    with patch('patchllm.llm.run_llm_query') as mock_llm:
+        mock_llm.return_value = "It's a web server."
+        response = session.ask_question("What does app.py do?")
+        
+        assert response == "It's a web server."
+        assert len(session.planning_history) == 3
+        prompt_content = session.planning_history[-2]['content']
+        assert "Code Context" in prompt_content
+        assert "<file_path:/app.py>..." in prompt_content
+        assert "My Question" in prompt_content
+        assert "What does app.py do?" in prompt_content
 
 def test_session_refine_plan(mock_args):
     session = AgentSession(args=mock_args, scopes={}, recipes={})
