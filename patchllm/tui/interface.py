@@ -537,19 +537,33 @@ def run_tui(args, scopes, recipes, scopes_file_path):
                     console.print(Panel("\n".join(f"{i+1}. {s}" for i, s in enumerate(session.plan)), title="Updated Execution Plan", border_style="magenta"))
             
             elif command == '/run':
-                if not session.plan: console.print("❌ No plan.", style="red"); continue
-                if session.current_step >= len(session.plan): console.print("✅ Plan complete.", style="green"); continue
-                
-                if arg_string == 'all':
-                    remaining_count = len(session.plan) - session.current_step
-                    console.print(f"\n--- Executing all {remaining_count} remaining steps ---", style="bold yellow")
-                    with console.status("[cyan]Agent is working..."): result = session.run_all_remaining_steps()
+                result = None
+                if session.plan:
+                    if session.current_step >= len(session.plan):
+                        console.print("✅ Plan complete.", style="green")
+                        continue
+                    
+                    if arg_string == 'all':
+                        remaining_count = len(session.plan) - session.current_step
+                        console.print(f"\n--- Executing all {remaining_count} remaining steps ---", style="bold yellow")
+                        with console.status("[cyan]Agent is working..."):
+                            result = session.run_all_remaining_steps()
+                    else:
+                        console.print(f"\n--- Executing Step {session.current_step + 1}/{len(session.plan)} ---", style="bold yellow")
+                        with console.status("[cyan]Agent is working..."):
+                            result = session.run_next_step()
                 else:
-                    console.print(f"\n--- Executing Step {session.current_step + 1}/{len(session.plan)} ---", style="bold yellow")
-                    with console.status("[cyan]Agent is working..."): result = session.run_next_step()
+                    if not session.goal:
+                        console.print("❌ No plan or goal is set. Use `/task <goal>` to set a goal first.", style="red")
+                        continue
+                    
+                    console.print("\n--- Executing Goal Directly (No Plan) ---", style="bold yellow")
+                    with console.status("[cyan]Agent is working..."):
+                        result = session.run_goal_directly()
 
                 _display_execution_summary(result, console)
-                if result: console.print("✅ Preview ready. Use `/diff` to review.", style="green")
+                if result:
+                    console.print("✅ Preview ready. Use `/diff` to review.", style="green")
 
             elif command == '/skip':
                 if not session.plan: console.print("❌ No plan to skip from.", style="red"); continue

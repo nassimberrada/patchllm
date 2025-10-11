@@ -326,3 +326,58 @@ def test_session_load_context_with_image(mock_args, temp_project):
     assert session.context_images is not None
     assert len(session.context_images) == 1
     assert session.context_images[0]["path"].name == "logo.png"
+
+def test_session_run_goal_directly(mock_args):
+    """Tests executing a goal without a plan."""
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.set_goal("my goal")
+    with patch('patchllm.agent.executor.execute_step') as mock_exec:
+        mock_exec.return_value = {"summary": {}}
+        session.run_goal_directly()
+        
+        mock_exec.assert_called_once()
+        instruction = mock_exec.call_args[0][0]
+        assert "achieve the following goal" in instruction
+        assert "my goal" in instruction
+        
+        assert session.last_execution_result is not None
+        assert session.last_execution_result['is_planless_run'] is True
+
+def test_session_approve_changes_planless_run(mock_args):
+    """Tests that approving a planless run does not advance a step count."""
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.set_goal("my goal")
+    llm_response = "<file_path:/a.txt>\n```\n...\n```"
+    session.last_execution_result = {
+        "instruction": "...",
+        "llm_response": llm_response,
+        "summary": {"modified": ["/a.txt"], "created": []},
+        "is_planless_run": True
+    }
+    
+    with patch('patchllm.parser.paste_response_selectively'):
+        is_full_approval = session.approve_changes(["/a.txt"])
+        
+        assert is_full_approval is True
+        assert session.current_step == 0 # Should NOT have changed
+        assert session.last_execution_result is None
+        assert "plan-less goal execution" in session.action_history[-1]
+
+def test_session_retry_step_planless_partial_approval(mock_args):
+    """Tests retrying a planless run after a partial approval."""
+    session = AgentSession(args=mock_args, scopes={}, recipes={})
+    session.set_goal("my goal")
+    session.last_execution_result = {
+        "approved_files": ["a.txt"],
+        "summary": {"modified": ["a.txt", "b.txt"], "created": []},
+        "is_planless_run": True
+    }
+    with patch('patchllm.agent.executor.execute_step') as mock_exec:
+        session.retry_step("feedback for b")
+        
+        mock_exec.assert_called_once()
+        instruction = mock_exec.call_args[0][0]
+        assert "approved** the changes for the following files:\n- a.txt" in instruction
+        assert "rejected** the changes for these files:\n- b.txt" in instruction
+        assert "feedback on the rejected files: feedback for b" in instruction
+        assert "achieve the goal: my goal" in instruction

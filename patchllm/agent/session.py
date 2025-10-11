@@ -223,6 +223,25 @@ class AgentSession:
             self.last_execution_result['is_multi_step'] = True 
         return result
 
+    def run_goal_directly(self) -> dict | None:
+        """Executes the user's goal directly without a plan."""
+        from . import executor
+
+        if not self.goal: return None
+
+        combined_instruction = (
+            "Please achieve the following goal in a single pass. "
+            "Ensure you provide the full, final content for every file you modify.\n\n"
+            f"--- Goal ---\n{self.goal}"
+        )
+
+        result = executor.execute_step(combined_instruction, self.history, self.context, self.context_images, self.args.model)
+        
+        if result:
+            self.last_execution_result = result
+            self.last_execution_result['is_planless_run'] = True 
+        return result
+
     def approve_changes(self, files_to_approve: list[str]) -> bool:
         """
         Applies changes from the last execution, either fully or partially.
@@ -254,21 +273,31 @@ class AgentSession:
         paste_response_selectively(self.last_execution_result["llm_response"], files_to_approve)
         
         is_multi_step = self.last_execution_result.get('is_multi_step', False)
-        step_log_msg = f"steps {self.current_step + 1}-{len(self.plan)}" if is_multi_step else f"step {self.current_step + 1}"
+        is_planless_run = self.last_execution_result.get('is_planless_run', False)
+
+        if is_planless_run:
+            step_log_msg = "plan-less goal execution"
+        else:
+            step_log_msg = f"steps {self.current_step + 1}-{len(self.plan)}" if is_multi_step else f"step {self.current_step + 1}"
+        
         self.action_history.append(f"Approved {len(files_to_approve)} file(s) for {step_log_msg}.")
         
         is_full_approval = len(files_to_approve) == len(all_proposed_files)
 
         if is_full_approval:
-            instruction_used = self.last_execution_result.get("instruction", self.plan[self.current_step])
+            instruction_used = self.last_execution_result.get("instruction")
+            if not instruction_used and not is_planless_run:
+                 instruction_used = self.plan[self.current_step]
+
             user_prompt = f"Context attached.\n\n---\n\nMy task was: {instruction_used}"
             self.history.append({"role": "user", "content": user_prompt})
             self.history.append({"role": "assistant", "content": self.last_execution_result["llm_response"]})
             
-            if is_multi_step:
-                self.current_step = len(self.plan)
-            else:
-                self.current_step += 1
+            if not is_planless_run:
+                if is_multi_step:
+                    self.current_step = len(self.plan)
+                else:
+                    self.current_step += 1
             
             self.last_execution_result = None
         else:
@@ -305,11 +334,17 @@ class AgentSession:
         """
         from . import executor
 
-        if self.current_step >= len(self.plan): return None 
-        
+        is_planless_run = self.last_execution_result and self.last_execution_result.get('is_planless_run', False)
+
+        if not is_planless_run and (not self.plan or self.current_step >= len(self.plan)): return None
+        if is_planless_run and not self.goal: return None
+
         is_multi_step = self.last_execution_result and self.last_execution_result.get('is_multi_step', False)
         
-        original_instruction = "to complete the rest of the plan" if is_multi_step else self.plan[self.current_step]
+        if is_planless_run:
+            original_instruction = f"to achieve the goal: {self.goal}"
+        else:
+            original_instruction = "to complete the rest of the plan" if is_multi_step else self.plan[self.current_step]
         
         if self.last_execution_result and 'approved_files' in self.last_execution_result:
             approved = self.last_execution_result['approved_files']
@@ -337,6 +372,8 @@ class AgentSession:
             self.last_execution_result = result
             if is_multi_step:
                 self.last_execution_result['is_multi_step'] = True
+            if is_planless_run:
+                self.last_execution_result['is_planless_run'] = True
         return result
 
     def reload_scopes(self, scopes_file_path: str):
