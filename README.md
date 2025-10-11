@@ -55,17 +55,20 @@ Inside the TUI, you direct the agent with simple slash commands.
 | Command | Description |
 |---|---|
 | `/task <goal>` | Sets the high-level goal for the agent. |
-| `/plan` | Generates a step-by-step plan. |
-| `/run` | Executes the current step and shows a summary of changes. |
+| `/plan [management]` | Generates a plan, or opens an interactive TUI to edit/add/remove steps. |
+| `/run [all]` | Executes the next step, or all remaining steps with `/run all`. |
+| `/approve` | Interactively select and apply changes from the last run. |
 | `/diff [all \| file]`| Shows the full diff for the proposed changes. |
-| `/approve` | Applies the changes from the last run. |
 | `/retry <feedback>`| Retries the last step with new feedback. |
+| `/skip` | Skips the current step and moves to the next. |
+| `/revert` | Reverts the changes from the last `/approve`. |
 | `/context <scope>` | Replaces the context with files from a scope. |
-| `/add_context <scope>`| Adds files from a scope to the current context. |
 | `/scopes` | Opens an interactive menu to manage your saved scopes. |
-| `/test` | Runs `pytest` to check for regressions. |
-| `/stage` | Stages all current changes with `git`. |
-| `/patch --clipboard`| Applies a patch from the system clipboard. |
+| `/ask <question>` | Ask a question about the plan or code context. |
+| `/refine <feedback>`| Refine the plan based on new feedback or ideas. |
+| `/show [state]` | Shows the current state (goal, plan, context, history, step). |
+| `/settings` | Configure the model and API keys. |
+| `/help` | Shows the detailed help message. |
 | `/exit` | Exits the agent session. |
 
 ## Headless Mode Flags
@@ -77,16 +80,18 @@ For scripting or single-shot edits, you can still use the original flags.
 | `-t`, `--task` | Provide a specific instruction to the LLM. |
 | `-s`, `--scope` | Use a static scope from `scopes.py` or a dynamic one. |
 | `-r`, `--recipe` | Use a predefined task from `recipes.py`. |
+| `-in`, `--interactive` | Interactively build the context by selecting files. |
 | `-i`, `--init` | Create a new `scopes.py` file. |
 | `-sl`, `--list-scopes`| List all available scopes. |
 | `-ff`, `--from-file` | Apply patches from a local file. |
+| `-fc`, `--from-clipboard` | Apply patches from the system clipboard. |
 | `-m`, `--model` | Specify a different model (default: `gemini/gemini-1.5-flash`). |
+| `-v`, `--voice` | Enable voice interaction (requires voice dependencies). |
 
 ## Setup
 PatchLLM uses [LiteLLM](https://github.com/BerriAI/litellm). Set up your API keys (e.g., `OPENAI_API_KEY`, `GEMINI_API_KEY`) in a `.env` file.
 
-The interactive TUI requires `prompt_toolkit` and `InquirerPy`. You can install all core dependencies with:
-```bash
+The interactive TUI requires `prompt_toolkit` and `InquirerPy`. You can install all core dependencies with:```bash
 pip install -r requirements.txt
 ```
 
