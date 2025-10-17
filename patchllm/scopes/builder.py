@@ -31,12 +31,39 @@ def build_context(scope_name: str, scopes: dict, base_path: Path) -> dict | None
             return None
         
         scope_path = Path(scope.get("path", ".")).resolve()
-        include = scope.get("include_patterns", [])
-        exclude = scope.get("exclude_patterns", [])
+        include_patterns = scope.get("include_patterns", [])
+        exclude_patterns = scope.get("exclude_patterns", [])
         search = scope.get("search_words", [])
         urls = scope.get("urls", [])
+
+        # Separate glob patterns from dynamic scopes
+        glob_includes = [p for p in include_patterns if not p.startswith('@')]
+        dynamic_includes = [p for p in include_patterns if p.startswith('@')]
+        glob_excludes = [p for p in exclude_patterns if not p.startswith('@')]
+        dynamic_excludes = [p for p in exclude_patterns if p.startswith('@')]
+
+        included_files = set()
+        excluded_files = set()
+
+        # 1. Resolve glob includes
+        if glob_includes:
+            included_files.update(helpers.find_files(scope_path, glob_includes))
+
+        # 2. Resolve dynamic includes
+        for dyn_scope in dynamic_includes:
+            included_files.update(resolvers.resolve_dynamic_scope(dyn_scope, base_path))
+
+        # 3. Resolve glob excludes
+        if glob_excludes:
+            excluded_files.update(helpers.find_files(scope_path, glob_excludes))
         
-        relevant_files = helpers.find_files(scope_path, include, exclude)
+        # 4. Resolve dynamic excludes
+        for dyn_scope in dynamic_excludes:
+            excluded_files.update(resolvers.resolve_dynamic_scope(dyn_scope, base_path))
+
+        # 5. Combine and sort
+        relevant_files = sorted(list(included_files - excluded_files))
+        
         if search:
             relevant_files = helpers.filter_files_by_keyword(relevant_files, search)
 

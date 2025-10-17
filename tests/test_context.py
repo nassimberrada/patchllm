@@ -138,3 +138,37 @@ def test_format_context_with_image(temp_project):
     assert len(result["files"]) == 2
     assert text_file in result["files"]
     assert image_file in result["files"]
+
+def test_build_context_static_scope_with_dynamic_patterns(git_project):
+    """
+    Tests that a static scope can successfully include and exclude files
+    using dynamic scopes (@-prefixed) as patterns.
+    """
+    # 1. Setup: Define the scopes dictionary directly
+    scopes = {
+        'dynamic_in_static': {
+            'path': '.',
+            'include_patterns': ['@git:staged', 'src/*.css'],
+            'exclude_patterns': ['**/README.md', '@git:unstaged']
+        }
+    }
+    os.chdir(git_project)
+    
+    # 2. Action: Stage one file, leave another unstaged
+    (git_project / "main.py").write_text("new staged content")
+    subprocess.run(["git", "add", "main.py"], cwd=git_project, check=True)
+
+    (git_project / "utils.py").write_text("new unstaged content") # This should be excluded
+    
+    # 3. Build context
+    result = build_context("dynamic_in_static", scopes, git_project)
+
+    # 4. Assertions
+    assert result is not None
+    files = result["files"]
+    file_names = {f.name for f in files}
+
+    assert "main.py" in file_names      # Included via @git:staged
+    assert "styles.css" in file_names   # Included via glob
+    assert "README.md" not in file_names # Excluded via glob
+    assert "utils.py" not in file_names   # Excluded via @git:unstaged
