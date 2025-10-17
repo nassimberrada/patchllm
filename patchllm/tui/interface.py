@@ -300,7 +300,7 @@ def _run_scope_management_tui(scopes, scopes_file_path, console):
     console.print("\n--- Scope Management ---", style="bold yellow")
     while True:
         try:
-            choices = ["List scopes", "Show a scope", "Add a new scope", "Update a scope", "Remove a scope", "Back to agent"]
+            choices = ["List scopes", "Show a scope", "Add a new scope", "Update a scope", "Remove a scope", "Export a scope's context", "Back to agent"]
             action_q = {"type": "list", "name": "action", "message": "Select an action:", "choices": choices, "border": True, "cycle": False}
             result = prompt([action_q])
             action = result.get("action") if result else "Back to agent"
@@ -357,6 +357,33 @@ def _run_scope_management_tui(scopes, scopes_file_path, console):
                     scopes[scope_name] = updated_scope_data
                     write_scopes_to_file(scopes_file_path, scopes)
                     console.print(f"✅ Scope '{scope_name}' updated.", style="green")
+
+            elif action == "Export a scope's context":
+                from ..scopes.builder import build_context
+                if not scopes: console.print("No scopes to export.", style="yellow"); continue
+                scope_q = {"type": "fuzzy", "name": "scope", "message": "Which scope's context to export?", "choices": sorted(scopes.keys())}
+                scope_r = prompt([scope_q])
+                scope_name = scope_r.get("scope") if scope_r else None
+                if not scope_name: continue
+
+                file_q = {"type": "input", "name": "filename", "message": "Enter the output filename:", "validate": EmptyInputValidator()}
+                file_r = prompt([file_q])
+                filename = file_r.get("filename") if file_r else None
+                if not filename: continue
+                
+                console.print(f"Building context for scope '[bold]{scope_name}[/bold]'...", style="cyan")
+                context_object = build_context(scope_name, scopes, Path(".").resolve())
+
+                if context_object and context_object.get("context"):
+                    try:
+                        output_path = Path(filename)
+                        output_path.write_text(context_object["context"], encoding="utf-8")
+                        console.print(f"✅ Context successfully exported to '[bold]{filename}[/bold]'.", style="green")
+                    except Exception as e:
+                        console.print(f"❌ Failed to write to file: {e}", style="red")
+                else:
+                    console.print(f"⚠️  Could not build context for scope '{scope_name}'. No files found or error occurred.", style="yellow")
+
 
         except (KeyboardInterrupt, InvalidArgument, IndexError, KeyError, TypeError): break
     console.print("\n--- Returning to Agent ---", style="bold yellow")

@@ -219,6 +219,52 @@ def test_scope_management_tui_update_flow(mock_scope_editor, mock_inquirer_promp
     loaded_scopes = load_from_py_file(scopes_file, "scopes")
     assert loaded_scopes["existing-scope"]["path"] == "new/path"
 
+@patch('patchllm.scopes.builder.build_context')
+@patch('InquirerPy.prompt')
+def test_scope_management_tui_export_flow(mock_inquirer_prompt, mock_build_context, tmp_path, capsys):
+    scopes_file = tmp_path / "scopes.py"
+    initial_scopes = {"base": {"path": "."}}
+    write_scopes_to_file(scopes_file, initial_scopes)
+    
+    output_filename = "context_export.md"
+    output_file = tmp_path / output_filename
+    
+    # Simulate user choosing "Export", selecting the scope, and entering a filename
+    mock_inquirer_prompt.side_effect = [
+        {"action": "Export a scope's context"},
+        {"scope": "base"},
+        {"filename": output_filename},
+        {"action": "Back to agent"} # To exit the loop
+    ]
+    
+    # Mock the return value of the context builder
+    mock_build_context.return_value = {
+        "context": "This is the mocked context content.",
+        "tree": "mock tree",
+        "files": []
+    }
+    
+    # Change CWD to tmp_path so the file is written there
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    
+    try:
+        _run_scope_management_tui(initial_scopes, str(scopes_file), Console())
+    finally:
+        os.chdir(original_cwd)
+
+    # Assert that the context builder was called correctly
+    mock_build_context.assert_called_once_with("base", initial_scopes, tmp_path.resolve())
+    
+    # Assert that the file was created with the correct content
+    assert output_file.exists()
+    assert output_file.read_text() == "This is the mocked context content."
+    
+    # Assert that the success message was printed
+    captured = capsys.readouterr()
+    assert f"Context successfully exported to '{output_filename}'" in captured.out
+
+
 @patch('patchllm.tui.interface.select_files_interactively')
 @patch('InquirerPy.prompt')
 def test_edit_patterns_interactive_with_selector(mock_inquirer_prompt, mock_selector, tmp_path):
